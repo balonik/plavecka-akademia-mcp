@@ -174,46 +174,40 @@ To exercise it live against the real site once running locally:
 `.github/workflows/deploy.yml` is a **placeholder that ships inert**: the job carries `if: false`
 so it can never actually deploy until it's deliberately wired up. It triggers on a successful CI
 run against `main` plus `workflow_dispatch`, and (once enabled) will: checkout → `npm ci` → `npm
-run build` → `npm ci --omit=dev` (prune to production deps for the deployment payload) → `azure/login@v2`
-via OIDC → `Azure/functions-action@v1`.
+run build` → `npm ci --omit=dev` (prune to production deps for the deployment payload) →
+`Azure/functions-action@v1` authenticated via a publish profile.
 
 ### 1. Create the Azure resources
 
-You need an existing Azure Function App (Node.js 24, Linux, Consumption or Flex Consumption plan)
-and its resource group. Creating those is outside this repo's scope — use the Azure Portal, `az`
-CLI, or Bicep/Terraform as you prefer.
+You need an existing Azure Function App (Node.js 24, Linux, Consumption plan) and its resource
+group. A Terraform configuration for this exists in a companion ops repo; creating the resources by
+hand via the Azure Portal or `az` CLI works too.
 
-### 2. Set up the OIDC federated credential (no stored secret)
+### 2. Get the publish profile
 
-1. Create (or reuse) an Azure AD App Registration; note its **Application (client) ID** and your
-   **Tenant ID** and **Subscription ID**.
-2. Grant that app's service principal the `Contributor` role (or a narrower
-   `Website Contributor` role) scoped to the Function App's resource group.
-3. Under the App Registration → **Certificates & secrets → Federated credentials**, add a
-   credential with:
-   - Scenario: **GitHub Actions deploying Azure resources**
-   - Organization / Repository: your GitHub org and this repo's name
-   - Entity type: **Branch**, value `main` (add another federated credential later if you want
-     `workflow_dispatch` from other refs, or use entity type **Environment** = `production` to
-     match the `environment: production` set in the deploy job)
+The deploy job authenticates with the Function App's own publish profile rather than an Azure AD
+app registration/OIDC — simpler to set up for a single-app, single-environment deployment, at the
+cost of a long-lived credential (rotate it periodically) instead of a short-lived exchanged token.
 
-No client secret or publish profile is stored anywhere — GitHub's OIDC token is exchanged for a
-short-lived Azure access token at run time.
+- **From Terraform:** the ops repo's `terraform apply` produces a `publish_profile` output
+  (marked sensitive) — `terraform output -raw publish_profile`.
+- **From the Portal:** Function App → **Overview** → **Get publish profile**, which downloads the
+  `.PublishSettings` XML directly.
+
+Either way, copy the full XML content verbatim into the GitHub secret below.
 
 ### 3. Configure the repository
 
 Set these under **Settings → Secrets and variables → Actions**:
 
-| Name                     | Kind     | Value                                      |
-| ------------------------ | -------- | ------------------------------------------ |
-| `AZURE_FUNCTIONAPP_NAME` | Variable | The Function App's name                    |
-| `AZURE_RESOURCE_GROUP`   | Variable | Its resource group                         |
-| `AZURE_CLIENT_ID`        | Secret   | App Registration's Application (client) ID |
-| `AZURE_TENANT_ID`        | Secret   | Azure AD tenant ID                         |
-| `AZURE_SUBSCRIPTION_ID`  | Secret   | Azure subscription ID                      |
+| Name                              | Kind     | Value                                    |
+| ---------------------------------- | -------- | ----------------------------------------- |
+| `AZURE_FUNCTIONAPP_NAME`           | Variable | The Function App's name                  |
+| `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` | Secret   | The full publish profile XML from step 2 |
 
 Optionally create a `production` GitHub Environment (matching `environment: production` in the
-workflow) if you want required reviewers or a wait timer on deploys.
+workflow) if you want required reviewers or a wait timer on deploys — this is a manual-approval
+gate only now, unrelated to how the job authenticates to Azure.
 
 ### 4. Flip the switch
 

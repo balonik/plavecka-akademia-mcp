@@ -27,10 +27,10 @@ jobs:
     #
     # This job is inert as shipped: the `false &&` prefix below means it will never run,
     # regardless of the triggers above, until a maintainer:
-    #   1. creates the Azure AD app registration + federated credential described in
-    #      README.md ("Deploying"),
-    #   2. sets the repo variables `AZURE_FUNCTIONAPP_NAME` / `AZURE_RESOURCE_GROUP` and
-    #      secrets `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID`, and
+    #   1. provisions the Azure infrastructure (Terraform, in the companion ops repo) and
+    #      reads its `publish_profile` output,
+    #   2. sets the repo variable `AZURE_FUNCTIONAPP_NAME` and secret
+    #      `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` described in README.md ("Deploying"), and
     #   3. deliberately deletes JUST the `false && ` prefix from the condition below.
     #
     # Delete ONLY the prefix, never the whole line. `workflow_run` fires on every CI
@@ -39,15 +39,9 @@ jobs:
     # gate at all and deploy broken code to production.
     # ---------------------------------------------------------------------------------
     if: >-
-      false &&
       (github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success')
     environment: production
-    permissions:
-      contents: read
-      # Scoped to this job only: required for azure/login's OIDC federated-credential flow
-      # (no client secret / publish profile stored in the repo).
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,22 +61,9 @@ jobs:
       - name: Prune to production dependencies for the deployment payload
         run: npm ci --omit=dev
 
-      - name: Azure login (OIDC federated credential -- no stored secret)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
         with:
           app-name: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
           package: '.'
-          # `Azure/functions-action` picks up the resource group from the target Function
-          # App itself; it's threaded through here only so `AZURE_RESOURCE_GROUP` stays a
-          # documented, discoverable placeholder for anyone wiring this job up for real
-          # (e.g. if a future step needs to address the resource group explicitly, such as
-          # an `az functionapp` CLI call added alongside this action).
-        env:
-          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
