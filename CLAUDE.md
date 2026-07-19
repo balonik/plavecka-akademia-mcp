@@ -17,7 +17,7 @@ It deploys as an Azure Function App over HTTPS and is registered in Claude as a 
 connector. **Gated by an Azure Functions key** (`authLevel: 'function'` in `src/functions/mcp.ts`,
 requiring `?code=<key>`), not user authentication — it's a read-only proxy over public listings, so
 there's no per-user login, but don't reintroduce `authLevel: 'anonymous'` without a deliberate
-reason; see README's "Security & trust model".
+reason; see README's "Security & trust model" (or ARCHITECTURE.md's fuller version).
 
 ## Why it exists
 
@@ -46,7 +46,8 @@ free of MCP concepts and `src/tools/` free of HTML.
 ## Site facts that are load-bearing
 
 These were each verified against the live site and are pinned by tests. Do not "simplify" them
-away.
+away. See [ARCHITECTURE.md](./ARCHITECTURE.md#how-the-site-is-scraped) for the same facts written
+out in prose, if a human is reading over your shoulder.
 
 1. **Container scoping.** Category pages contain other Views blocks (`22_zoznam_centier`) that also
    render `.views-row` elements. Parsing must be scoped inside
@@ -89,7 +90,7 @@ away.
 
 ## Testing
 
-`npm run check` = typecheck → lint → format check → tests. All 130 tests run offline: the HTTP
+`npm run check` = typecheck → lint → format check → tests. All 134 tests run offline: the HTTP
 layer takes an injectable `fetchFn` (or, for `test/mcpProtocol.test.ts`'s real-wire-protocol tests
 against `createServer()`, a stubbed global `fetch`) and parsers read committed fixtures in
 `test/fixtures/`. Coverage threshold is 80% on `src/site/**` and `src/tools/**`.

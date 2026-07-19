@@ -284,14 +284,16 @@ describe('find_common_slots', () => {
     };
 
     const result = await findCommonSlots(
-      { categories: ['korytnacka', 'zralok'] },
+      { categories: [{ category: 'korytnacka' }, { category: 'zralok' }] },
       { fetchFn: impl },
     );
 
     expect(result.matches.length).toBeGreaterThan(0);
     for (const match of result.matches) {
-      expect(match.coursesByCategory['korytnacka']?.length).toBeGreaterThan(0);
-      expect(match.coursesByCategory['zralok']?.length).toBeGreaterThan(0);
+      const korytnacka = match.groups.find((g) => g.category === 'korytnacka');
+      const zralok = match.groups.find((g) => g.category === 'zralok');
+      expect(korytnacka?.courses.length).toBeGreaterThan(0);
+      expect(zralok?.courses.length).toBeGreaterThan(0);
     }
   });
 
@@ -318,7 +320,7 @@ describe('find_common_slots', () => {
     };
 
     const result = await findCommonSlots(
-      { categories: ['korytnacka', 'zralok'] },
+      { categories: [{ category: 'korytnacka' }, { category: 'zralok' }] },
       { fetchFn: impl },
     );
     expect(result.matches).toEqual([]);
@@ -328,5 +330,118 @@ describe('find_common_slots', () => {
     await expect(findCommonSlots({ categories: [] })).rejects.toThrow(
       /Provide at least one category/,
     );
+  });
+
+  it('narrows a category to a specific level while another category stays unfiltered', async () => {
+    const zralokHtml = buildListingHtml([
+      {
+        categorySlug: 'plavanie-pre-deti-zralok',
+        id: '6000001',
+        centre: 'Limbach',
+        day: 'Pondelok',
+        starCount: 1,
+      },
+      {
+        categorySlug: 'plavanie-pre-deti-zralok',
+        id: '6000002',
+        centre: 'Limbach',
+        day: 'Pondelok',
+        starCount: 2,
+      },
+    ]);
+    const korytnackaHtml = buildListingHtml([
+      {
+        categorySlug: 'plavanie-pre-deti-korytnacka',
+        id: '6000003',
+        centre: 'Limbach',
+        day: 'Pondelok',
+      },
+    ]);
+    const impl: FetchFn = async (input) => {
+      const url = urlOf(input);
+      return htmlResponse(url.includes('/zralok') ? zralokHtml : korytnackaHtml);
+    };
+
+    const result = await findCommonSlots(
+      { categories: [{ category: 'zralok', level: '**' }, { category: 'korytnacka' }] },
+      { fetchFn: impl },
+    );
+
+    expect(result.matches).toHaveLength(1);
+    const zralokGroup = result.matches[0]?.groups.find((g) => g.category === 'zralok');
+    expect(zralokGroup?.courses.map((c) => c.id)).toEqual(['6000002']);
+  });
+
+  it('allows the same category twice at different levels and matches only where both are present', async () => {
+    const bothLevels = buildListingHtml([
+      {
+        categorySlug: 'plavanie-pre-deti-zralok',
+        id: '6000010',
+        centre: 'Limbach',
+        day: 'Pondelok',
+        starCount: 1,
+      },
+      {
+        categorySlug: 'plavanie-pre-deti-zralok',
+        id: '6000011',
+        centre: 'Limbach',
+        day: 'Pondelok',
+        starCount: 2,
+      },
+    ]);
+    const onlyOneLevel = buildListingHtml([
+      {
+        categorySlug: 'plavanie-pre-deti-zralok',
+        id: '6000012',
+        centre: 'Ružinov',
+        day: 'Utorok',
+        starCount: 1,
+      },
+    ]);
+
+    const bothResult = await findCommonSlots(
+      {
+        categories: [
+          { category: 'zralok', level: '*' },
+          { category: 'zralok', level: '**' },
+        ],
+      },
+      { fetchFn: async () => htmlResponse(bothLevels) },
+    );
+    expect(bothResult.matches).toHaveLength(1);
+    expect(bothResult.matches[0]?.groups).toHaveLength(2);
+
+    // Both requests resolve to the same upstream URLs (same category/level, no location),
+    // so without clearing the cache the second call would be served the first call's
+    // cached response instead of exercising `onlyOneLevel`.
+    clearCache();
+    const oneLevelResult = await findCommonSlots(
+      {
+        categories: [
+          { category: 'zralok', level: '*' },
+          { category: 'zralok', level: '**' },
+        ],
+      },
+      { fetchFn: async () => htmlResponse(onlyOneLevel) },
+    );
+    expect(oneLevelResult.matches).toEqual([]);
+  });
+
+  it('sends the resolved level upstream as uroven[]', async () => {
+    const seen: string[] = [];
+    const impl: FetchFn = async (input) => {
+      seen.push(urlOf(input));
+      return htmlResponse(buildListingHtml([]));
+    };
+
+    await findCommonSlots({ categories: [{ category: 'zralok', level: '**' }] }, { fetchFn: impl });
+
+    expect(seen[0]).toContain('uroven%5B%5D=1');
+  });
+
+  it('rejects a level requested for a category with no sub-levels', async () => {
+    await expect(
+      findCommonSlots({ categories: [{ category: 'morsky-konik', level: '*' }] }),
+    ).rejects.toThrow(/does not offer sub-levels/);
   });
 });

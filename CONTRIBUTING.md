@@ -35,9 +35,10 @@ CI runs exactly `npm run check`, so a clean local run means a clean CI run.
 
 ## Project layout
 
-See the "Architecture" section of [CLAUDE.md](./CLAUDE.md). In short: `src/site/` is the scraping
-core (no MCP concepts), `src/tools/` is one file per MCP tool (no HTML), `src/functions/` is a thin
-Azure adapter.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) (or the "Architecture" section of [CLAUDE.md](./CLAUDE.md)
+for the terser, AI-agent-facing version). In short: `src/site/` is the scraping core (no MCP
+concepts), `src/tools/` is one file per MCP tool (no HTML), `src/functions/` is a thin Azure
+adapter.
 
 ## Coding conventions
 
@@ -60,10 +61,10 @@ This server's answers are consumed by an LLM that will relay them to a person. "
 available" and "the parser broke" look identical downstream unless the parser is loud about it, and
 the first is a plausible-sounding wrong answer. Prefer a visible error every time.
 
-[CLAUDE.md](./CLAUDE.md) documents the eight verified site facts the parsers depend on (container
-scoping, structural empty detection, the three bookable capacity states, the inverted sub-level
-mapping, and so on). Read those before changing selectors — several are counter-intuitive and were
-each the result of a wrong first guess.
+[CLAUDE.md](./CLAUDE.md) and [ARCHITECTURE.md](./ARCHITECTURE.md#how-the-site-is-scraped) document
+the verified site facts the parsers depend on (container scoping, structural empty detection, the
+three bookable capacity states, the inverted sub-level mapping, and so on). Read those before
+changing selectors — several are counter-intuitive and were each the result of a wrong first guess.
 
 ### Re-recording fixtures
 
@@ -107,10 +108,11 @@ with explicit UTF-8 when scripting anything involving accented text.
 
 ## Deployment
 
-`.github/workflows/deploy.yml` ships **inert** (`if: false`) with placeholder Azure values. Enabling
-it is a deliberate, separately-committed act — see the "Deploying" section of the
-[README](./README.md) for the required repo variables, secrets, and OIDC federated-credential
-setup. Please don't enable it as a side effect of an unrelated PR.
+`.github/workflows/deploy.yml` runs automatically after CI succeeds on `main`, uploading a new
+package to blob storage and asking the platform to pick it up (the Linux Consumption plan this app
+runs on doesn't support classic zip-push deploys). See [ARCHITECTURE.md](./ARCHITECTURE.md#deploying)
+for the full mechanism and the one-time repo setup (SAS token, host key, secrets/variables). Keep
+any change to `deploy.yml` itself in its own commit, separate from unrelated PRs.
 
 ## License
 

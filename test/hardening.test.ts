@@ -88,10 +88,13 @@ describe('find_common_slots duplicate categories (REVIEW.md L2)', () => {
     // "korytnacka" and "Korytnačka" resolve to the same slug. Undeduplicated, the
     // "every requested category is present" check was satisfied twice by one category's
     // courses, reporting slots as serving two categories when they serve one.
-    const result = await findCommonSlots({ categories: ['korytnacka', 'Korytnačka'] }, { fetchFn });
+    const result = await findCommonSlots(
+      { categories: [{ category: 'korytnacka' }, { category: 'Korytnačka' }] },
+      { fetchFn },
+    );
 
     for (const match of result.matches) {
-      expect(Object.keys(match.coursesByCategory)).toEqual(['korytnacka']);
+      expect(match.groups.map((g) => g.category)).toEqual(['korytnacka']);
     }
   });
 });

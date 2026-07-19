@@ -1,9 +1,17 @@
 name: Deploy to Azure Functions
 
-# Runs after CI succeeds on `main`, plus an on-demand manual trigger. Both triggers are
-# harmless to leave enabled: the job itself is gated `if: false` below until the Azure
-# OIDC credentials exist, so nothing actually deploys yet no matter how this workflow is
-# invoked.
+# Runs after CI succeeds on `main`, plus an on-demand manual trigger.
+#
+# The Function App runs on a Linux Consumption plan, which only supports deploying via
+# WEBSITE_RUN_FROM_PACKAGE=<URL> -- not the classic Kudu zip-push that Azure/functions-action
+# and `az functionapp deployment source config-zip` normally use (that path reliably 503s on
+# this plan type; see the ops repo's Terraform for the app-setting wiring). So this workflow
+# instead uploads the built package to a fixed blob URL and asks the platform to pick it up:
+#   1. Upload the zip to the storage account's "deployments" container via a container-scoped
+#      SAS token (data-plane only, no Azure AD login needed for this step).
+#   2. Call /admin/host/synctriggers with a dedicated host key, since the blob URL itself never
+#      changes between deploys (only its content does) and the platform doesn't notice a new
+#      package at the same URL on its own.
 on:
   workflow_run:
     workflows: [CI]
@@ -22,22 +30,6 @@ jobs:
   deploy:
     name: Build and deploy to Azure Functions
     runs-on: ubuntu-latest
-    # ---------------------------------------------------------------------------------
-    # PLACEHOLDER -- INTENTIONALLY DISABLED.
-    #
-    # This job is inert as shipped: the `false &&` prefix below means it will never run,
-    # regardless of the triggers above, until a maintainer:
-    #   1. provisions the Azure infrastructure (Terraform, in the companion ops repo) and
-    #      reads its `publish_profile` output,
-    #   2. sets the repo variable `AZURE_FUNCTIONAPP_NAME` and secret
-    #      `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` described in README.md ("Deploying"), and
-    #   3. deliberately deletes JUST the `false && ` prefix from the condition below.
-    #
-    # Delete ONLY the prefix, never the whole line. `workflow_run` fires on every CI
-    # conclusion -- failure and cancelled included -- so the rest of this condition is what
-    # stops a red build from shipping. Removing the entire line would leave the job with no
-    # gate at all and deploy broken code to production.
-    # ---------------------------------------------------------------------------------
     if: >-
       (github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success')
@@ -61,9 +53,25 @@ jobs:
       - name: Prune to production dependencies for the deployment payload
         run: npm ci --omit=dev
 
-      - name: Deploy to Azure Functions
-        uses: Azure/functions-action@v1
-        with:
-          app-name: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
-          package: '.'
-          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+      - name: Create deployment package
+        run: |
+          mkdir -p package-stage
+          cp -r dist node_modules package-stage/
+          cp package.json package-lock.json host.json package-stage/
+          (cd package-stage && zip -r -q ../deploy.zip .)
+
+      - name: Upload package to blob storage
+        run: |
+          sas="${{ secrets.AZURE_STORAGE_DEPLOY_SAS }}"
+          az storage blob upload \
+            --account-name "${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}" \
+            --container-name deployments \
+            --name package.zip \
+            --file deploy.zip \
+            --sas-token "${sas#\?}" \
+            --overwrite
+
+      - name: Sync triggers so the platform picks up the new package
+        run: |
+          curl -sf -X POST \
+            "https://${{ vars.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/admin/host/synctriggers?code=${{ secrets.AZURE_FUNCTIONAPP_SYNC_KEY }}"

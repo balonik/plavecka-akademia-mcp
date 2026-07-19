@@ -135,7 +135,7 @@ describe('MCP tool wrappers (real wire protocol, stubbed global fetch)', () => {
     const client = await connectedClient();
     const result = await client.callTool({
       name: 'find_common_slots',
-      arguments: { categories: ['korytnacka'] },
+      arguments: { categories: [{ category: 'korytnacka' }] },
     });
 
     expect(result.isError).toBeFalsy();
@@ -150,7 +150,7 @@ describe('MCP tool wrappers (real wire protocol, stubbed global fetch)', () => {
     const client = await connectedClient();
     const result = await client.callTool({
       name: 'find_common_slots',
-      arguments: { categories: ['nemo'] },
+      arguments: { categories: [{ category: 'nemo' }] },
     });
 
     expect(result.isError).toBe(true);

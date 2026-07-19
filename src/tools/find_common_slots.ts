@@ -1,30 +1,42 @@
 /**
- * `find_common_slots` tool: fetches the (cached) listing for each requested category,
- * groups courses by centre and weekday, and returns only the centre/day combinations
- * where every requested category has at least one matching course.
+ * `find_common_slots` tool: fetches the (cached) listing for each requested
+ * category+level, groups courses by centre and weekday, and returns only the
+ * centre/day combinations where every requested (category, level) has at least
+ * one matching course.
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { fetchPaginated, type ClientOptions } from '../site/client.js';
-import { buildCourseListUrl, SLOVAK_WEEKDAYS } from '../site/constants.js';
+import { buildCourseListUrl, LEVEL_TO_PARAM, SLOVAK_WEEKDAYS } from '../site/constants.js';
 import { resolveCategory, resolveCentre, resolveDay } from '../site/normalize.js';
 import { parseList, type CourseSummary } from '../site/parseList.js';
 import { courseSchema } from './list_courses.js';
 
+export interface CategoryLevelRequest {
+  category: string;
+  // `| undefined` kept explicit for exactOptionalPropertyTypes, matching the convention
+  // used throughout this file and list_courses.ts.
+  level?: '*' | '**' | 'any' | undefined;
+}
+
 export interface FindCommonSlotsInput {
-  categories: string[];
-  // `| undefined` kept explicit alongside `?:` for exactOptionalPropertyTypes
-  // compatibility with the zod-parsed MCP callback argument.
+  categories: CategoryLevelRequest[];
   location?: string | undefined;
   day?: string | undefined;
   onlyAvailable?: boolean | undefined;
 }
 
+export interface CommonSlotGroup {
+  category: string;
+  level: '*' | '**' | 'any';
+  courses: CourseSummary[];
+}
+
 export interface CommonSlotMatch {
   centre: string;
   day: string;
-  coursesByCategory: Record<string, CourseSummary[]>;
+  groups: CommonSlotGroup[];
 }
 
 export type FindCommonSlotsOutput = {
@@ -62,6 +74,12 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+interface Requirement {
+  key: string;
+  slug: string;
+  level: '*' | '**' | 'any';
+}
+
 export async function findCommonSlots(
   input: FindCommonSlotsInput,
   options: ClientOptions = {},
@@ -69,33 +87,62 @@ export async function findCommonSlots(
   if (input.categories.length === 0) {
     throw new Error('Provide at least one category.');
   }
-  // De-duplicate by resolved slug: "korytnacka" and "Korytnačka" are the same category, and
-  // without this the "every requested category is present" check below is satisfied twice
-  // over by one category's courses, reporting slots as serving two categories when they
-  // serve one.
-  const categoryDefs = [
+
+  const resolved = input.categories.map((c) => {
+    const def = resolveCategory(c.category);
+    const level = c.level ?? 'any';
+    if (level !== 'any' && !def.hasSubLevels) {
+      throw new Error(
+        `Category "${def.slug}" does not offer sub-levels, so "level" must be omitted or "any".`,
+      );
+    }
+    return { def, level };
+  });
+
+  // De-duplicate on the (slug, level) pair: "korytnacka" and "Korytnačka" are the same
+  // category, and without this the "every requested (category, level) is present" check
+  // below is satisfied twice over by one requirement's courses, reporting slots as
+  // serving two requirements when they serve one. The composite key also means the same
+  // category at two different levels (e.g. Žralok* and Žralok**) stays two distinct
+  // requirements rather than collapsing into one.
+  const requirements = [
     ...new Map(
-      input.categories.map((c) => resolveCategory(c)).map((def) => [def.slug, def]),
+      resolved.map(({ def, level }) => [
+        `${def.slug}|${level}`,
+        { key: `${def.slug}|${level}`, slug: def.slug, level },
+      ]),
     ).values(),
   ];
+
   const centre = input.location !== undefined ? resolveCentre(input.location) : undefined;
   const day = input.day !== undefined ? resolveDay(input.day) : undefined;
   const onlyAvailable = input.onlyAvailable ?? false;
 
-  const perCategory = await mapWithConcurrency(categoryDefs, CONCURRENCY_LIMIT, async (def) => {
-    const url = buildCourseListUrl(def.slug, {
-      centres: centre !== undefined ? [centre] : undefined,
-    });
-    let courses = await fetchPaginated(url, parseList, options);
-    if (onlyAvailable) {
-      courses = courses.filter((c) => c.capacity.available);
-    }
-    return { category: def.slug, courses };
-  });
+  const perRequirement = await mapWithConcurrency(
+    requirements,
+    CONCURRENCY_LIMIT,
+    async (req: Requirement) => {
+      const levelParam = req.level === 'any' ? undefined : LEVEL_TO_PARAM[req.level];
+      const url = buildCourseListUrl(req.slug, {
+        centres: centre !== undefined ? [centre] : undefined,
+        levelParam,
+      });
+      let courses = await fetchPaginated(url, parseList, options);
+      if (req.level !== 'any') {
+        // Zero-star rows come back under BOTH upstream uroven[] values, so a specific
+        // level must post-filter on the exact star count. See CLAUDE.md site-fact #4.
+        courses = courses.filter((c) => c.level === req.level);
+      }
+      if (onlyAvailable) {
+        courses = courses.filter((c) => c.capacity.available);
+      }
+      return { requirement: req, courses };
+    },
+  );
 
-  // buckets: centre -> day -> category slug -> matching courses
+  // buckets: centre -> day -> requirement key -> matching courses
   const buckets = new Map<string, Map<string, Map<string, CourseSummary[]>>>();
-  for (const { category, courses } of perCategory) {
+  for (const { requirement, courses } of perRequirement) {
     for (const course of courses) {
       for (const slot of course.schedule) {
         if (day !== undefined && slot.day !== day) {
@@ -106,36 +153,36 @@ export async function findCommonSlots(
           byDay = new Map();
           buckets.set(course.centre, byDay);
         }
-        let byCategory = byDay.get(slot.day);
-        if (!byCategory) {
-          byCategory = new Map();
-          byDay.set(slot.day, byCategory);
+        let byRequirement = byDay.get(slot.day);
+        if (!byRequirement) {
+          byRequirement = new Map();
+          byDay.set(slot.day, byRequirement);
         }
-        let list = byCategory.get(category);
+        let list = byRequirement.get(requirement.key);
         if (!list) {
           list = [];
-          byCategory.set(category, list);
+          byRequirement.set(requirement.key, list);
         }
         list.push(course);
       }
     }
   }
 
-  const requestedSlugs = categoryDefs.map((d) => d.slug);
   const matches: CommonSlotMatch[] = [];
   for (const [centreName, byDay] of buckets) {
-    for (const [dayName, byCategory] of byDay) {
-      const hasAllCategories = requestedSlugs.every(
-        (slug) => (byCategory.get(slug)?.length ?? 0) > 0,
+    for (const [dayName, byRequirement] of byDay) {
+      const hasAllRequirements = requirements.every(
+        (req) => (byRequirement.get(req.key)?.length ?? 0) > 0,
       );
-      if (!hasAllCategories) {
+      if (!hasAllRequirements) {
         continue;
       }
-      const coursesByCategory: Record<string, CourseSummary[]> = {};
-      for (const slug of requestedSlugs) {
-        coursesByCategory[slug] = byCategory.get(slug) ?? [];
-      }
-      matches.push({ centre: centreName, day: dayName, coursesByCategory });
+      const groups: CommonSlotGroup[] = requirements.map((req) => ({
+        category: req.slug,
+        level: req.level,
+        courses: byRequirement.get(req.key) ?? [],
+      }));
+      matches.push({ centre: centreName, day: dayName, groups });
     }
   }
 
@@ -149,9 +196,25 @@ export async function findCommonSlots(
 
 const inputSchema = {
   categories: z
-    .array(z.string())
+    .array(
+      z.object({
+        category: z
+          .string()
+          .describe(
+            'Category slug or display name, e.g. "zralok" or "Žralok" (diacritic/case-insensitive).',
+          ),
+        level: z
+          .enum(['*', '**', 'any'])
+          .optional()
+          .describe(
+            'Sub-level filter for this category; omit or "any" for no filter. Must be omitted (or "any") for categories with no sub-levels (e.g. morsky-konik).',
+          ),
+      }),
+    )
     .min(1)
-    .describe('Category slugs or display names, e.g. ["zralok", "delfin", "korytnacka"].'),
+    .describe(
+      'Category + optional level requirements, e.g. [{"category":"zralok","level":"**"},{"category":"delfin"}]. The same category may appear twice at different levels.',
+    ),
   location: z
     .string()
     .optional()
@@ -165,10 +228,20 @@ const outputSchema = {
     z.object({
       centre: z.string(),
       day: z.string(),
-      coursesByCategory: z.record(z.string(), z.array(courseSchema)),
+      groups: z.array(
+        z.object({
+          category: z.string(),
+          level: z.enum(['*', '**', 'any']),
+          courses: z.array(courseSchema),
+        }),
+      ),
     }),
   ),
 };
+
+function formatGroupLabel(group: { category: string; level: '*' | '**' | 'any' }): string {
+  return group.level === 'any' ? group.category : `${group.category} ${group.level}`;
+}
 
 export function registerFindCommonSlotsTool(server: McpServer): void {
   server.registerTool(
@@ -176,7 +249,7 @@ export function registerFindCommonSlotsTool(server: McpServer): void {
     {
       title: 'Find common centre/day slots across categories',
       description:
-        'Finds centre + weekday combinations where every requested category has at least one matching course, with the concrete courses per category. Useful for "book Žralok + Delfín + Korytnačka at the same place" style questions.',
+        'Finds centre + weekday combinations where every requested category (optionally at a specific sub-level) has at least one matching course, with the concrete courses per requirement. Useful for "book Žralok** + Delfín* at the same place" style questions.',
       inputSchema,
       outputSchema,
     },
@@ -187,9 +260,7 @@ export function registerFindCommonSlotsTool(server: McpServer): void {
           result.matches.length === 0
             ? 'No centre/day combination has all requested categories available.'
             : result.matches
-                .map(
-                  (m) => `${m.centre} on ${m.day}: ${Object.keys(m.coursesByCategory).join(', ')}`,
-                )
+                .map((m) => `${m.centre} on ${m.day}: ${m.groups.map(formatGroupLabel).join(', ')}`)
                 .join('\n');
         return { content: [{ type: 'text' as const, text }], structuredContent: result };
       } catch (err) {
