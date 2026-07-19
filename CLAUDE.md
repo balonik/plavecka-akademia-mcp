@@ -89,9 +89,10 @@ away.
 
 ## Testing
 
-`npm run check` = typecheck → lint → format check → tests. All 97 tests run offline: the HTTP layer
-takes an injectable `fetchFn` and parsers read committed fixtures in `test/fixtures/`. Coverage
-threshold is 80% on `src/site/**` and `src/tools/**`.
+`npm run check` = typecheck → lint → format check → tests. All 130 tests run offline: the HTTP
+layer takes an injectable `fetchFn` (or, for `test/mcpProtocol.test.ts`'s real-wire-protocol tests
+against `createServer()`, a stubbed global `fetch`) and parsers read committed fixtures in
+`test/fixtures/`. Coverage threshold is 80% on `src/site/**` and `src/tools/**`.
 
 **Re-recording fixtures**: the fixtures are a point-in-time snapshot (July 2026) with real course
 data. If the site's markup changes, re-record them rather than loosening assertions — the whole

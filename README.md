@@ -200,9 +200,9 @@ Either way, copy the full XML content verbatim into the GitHub secret below.
 
 Set these under **Settings → Secrets and variables → Actions**:
 
-| Name                              | Kind     | Value                                    |
-| ---------------------------------- | -------- | ----------------------------------------- |
-| `AZURE_FUNCTIONAPP_NAME`           | Variable | The Function App's name                  |
+| Name                                | Kind     | Value                                    |
+| ----------------------------------- | -------- | ---------------------------------------- |
+| `AZURE_FUNCTIONAPP_NAME`            | Variable | The Function App's name                  |
 | `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` | Secret   | The full publish profile XML from step 2 |
 
 Optionally create a `production` GitHub Environment (matching `environment: production` in the
