@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel any in-progress run for the same ref when a new one starts (e.g. a fresh push
+# to the same PR branch), so we don't burn CI minutes on superseded commits.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: typecheck, lint, format, test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run typecheck, lint, format check and tests
+        run: npm run check
+
+      # `check` runs the plain (uninstrumented) test script so its failures point straight
+      # at a test file with no coverage-instrumentation noise; this second pass re-runs the
+      # suite under v8 coverage purely to produce the artifact uploaded below and to
+      # enforce the 80% lines/branches threshold on src/site/** and src/tools/**.
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
