@@ -11,8 +11,11 @@ a sub-level filter, no day/time filter and no way to ask a cross-category questi
 fetches and parses the site's own HTML and layers the richer filtering on top, server-side.
 
 It deploys as an Azure Function App over HTTPS and is registered in Claude as a custom web
-connector. **The endpoint requires no authentication** — it is a read-only proxy over public,
-already-published course listings, so there is nothing to protect behind a login.
+connector. **The endpoint is gated by an Azure Functions key** (`?code=<key>` in the URL) rather
+than user authentication — it's a read-only proxy over public, already-published course listings,
+so there's no login to build, but the key still keeps casual/automated traffic off it. See
+"Security & trust model" below and "Register the deployed server in Claude" for how to obtain and
+use the key.
 
 ## Tools
 
@@ -110,11 +113,13 @@ matches: [] }` when no combination satisfies all requested categories.
 This server is a read-only proxy over public course listings, so there is nothing to protect
 behind a login. That is not the same as there being nothing to think about:
 
-- **The endpoint is anonymous and unrated-limited.** `authLevel` is `anonymous` and there is no
-  per-caller accounting. Anyone who learns the Function URL can drive requests at
-  plaveckaakademia.sk from your Azure IP. If you expose it beyond personal use, put a function key
-  or Azure API Management rate limit in front of it — no _authorization_ is needed, but that is not
-  an argument for no _rate limiting_.
+- **The endpoint is gated by a function key, not user authentication.** `authLevel` is
+  `'function'` (`src/functions/mcp.ts`), so Azure itself rejects any request missing a valid
+  `?code=<key>` (or `x-functions-key` header) before this code ever runs. That's a shared-secret
+  gate against casual/automated abuse — it is not per-caller accounting or rate limiting. Anyone
+  who has the key can still drive unlimited requests at plaveckaakademia.sk from your Azure IP, and
+  the key is one shared secret, not scoped per user. If you need real rate limiting or multi-tenant
+  access control, put Azure API Management or a WAF in front of it as well.
 - **`get_course` is path-restricted, not just host-restricted.** A supplied `url` must be `https`,
   on an exactly-matching allowlisted host, with no port and no embedded credentials, _and_ its path
   must look like a course detail page (`/plavecky-kurz/<category>/<pool>/<id>` or `/node/<id>`).
@@ -147,6 +152,12 @@ npm start             # builds, then runs the Function App locally via `func sta
 The local server listens at `http://localhost:7071/api/mcp`. No test performs real network I/O —
 the HTTP layer takes an injectable `fetchFn`, and parser tests read the committed fixtures under
 `test/fixtures/`.
+
+**Note on the function key locally:** Azure Functions Core Tools does not enforce `authLevel` by
+default — `func start` serves every route anonymously regardless of the configured level, so a
+plain local request needs no `?code=`. To actually exercise the gated behavior locally (e.g. before
+trusting it in Azure), run `func start --enableAuth` instead and confirm a request without `?code=`
+is rejected.
 
 To exercise it live against the real site once running locally:
 
@@ -213,22 +224,53 @@ including `failure` and `cancelled`, so a job with no condition would ship a red
 
 Commit that as its own change so it's easy to spot in history when deploys became live.
 
-### 5. Register the deployed server in Claude
+### 5. Get a function key
 
-Once deployed, the MCP endpoint is:
+The `mcp` function requires `authLevel: 'function'`, so requests need a `?code=<key>` query
+parameter. Create a **dedicated named key for this connector** rather than reusing the default or
+host master key, so it can be revoked independently later without breaking anything else:
+
+```bash
+az functionapp function keys set \
+  --name <your-function-app-name> \
+  --resource-group <your-resource-group> \
+  --function-name mcp \
+  --key-name claude-connector \
+  --key-value "$(openssl rand -base64 32)"
+```
+
+Or via the Portal: Function App → **Functions** → **mcp** → **Function Keys** → **+ New function
+key**. (The Function App's own **App keys** blade issues a host-level key that works for every
+function in the app — fine too, but a function-scoped key limits the blast radius of a leak.)
+
+To list existing keys instead of creating one:
+
+```bash
+az functionapp function keys list \
+  --name <your-function-app-name> \
+  --resource-group <your-resource-group> \
+  --function-name mcp
+```
+
+Rotating or deleting a key immediately invalidates any URL using it — update the connector's URL
+below after rotating.
+
+### 6. Register the deployed server in Claude
+
+Once deployed, the MCP endpoint, with the key from step 5, is:
 
 ```
-https://<your-function-app-name>.azurewebsites.net/api/mcp
+https://<your-function-app-name>.azurewebsites.net/api/mcp?code=<key>
 ```
 
 In Claude, add it as a **custom connector** (Settings → Connectors → Add custom connector) pointing
-at that URL. No authentication is required.
+at that full URL, including the `?code=` query parameter.
 
 ## Project layout
 
 ```
 src/
-  functions/mcp.ts   Azure Functions v4 HTTP trigger (route "mcp", anonymous, GET/POST/DELETE)
+  functions/mcp.ts   Azure Functions v4 HTTP trigger (route "mcp", function-key auth, GET/POST/DELETE)
   server.ts          McpServer construction + tool registration
   site/              Scraping core: constants, HTTP client/cache, listing/detail parsers, normalisation
   tools/             One file per MCP tool

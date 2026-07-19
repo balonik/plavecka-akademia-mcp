@@ -14,7 +14,10 @@ own UI can't:
 - _"Give me dates and places where I can book Žralok, Delfín and Korytnačka at the same location"_
 
 It deploys as an Azure Function App over HTTPS and is registered in Claude as a custom web
-connector. **No authentication** — it's a read-only proxy over public listings.
+connector. **Gated by an Azure Functions key** (`authLevel: 'function'` in `src/functions/mcp.ts`,
+requiring `?code=<key>`), not user authentication — it's a read-only proxy over public listings, so
+there's no per-user login, but don't reintroduce `authLevel: 'anonymous'` without a deliberate
+reason; see README's "Security & trust model".
 
 ## Why it exists
 

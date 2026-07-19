@@ -1,5 +1,12 @@
 /**
- * Azure Functions v4 HTTP trigger, route "mcp", anonymous auth, GET/POST/DELETE.
+ * Azure Functions v4 HTTP trigger, route "mcp", function-key auth, GET/POST/DELETE.
+ *
+ * `authLevel: 'function'` means the Azure Functions host itself requires a valid
+ * `?code=<key>` query parameter (or `x-functions-key` header) before this handler is ever
+ * invoked -- there is no key-validation code here to write or get wrong. Keys are managed
+ * entirely in Azure (Portal "App keys" / the function's own "Function Keys" blade, or
+ * `az functionapp function keys`), independently of a deployment. See README's "Register
+ * the deployed server in Claude" section for how to obtain one and build the URL.
  *
  * Bridges the Functions request/response model to the MCP SDK's
  * `WebStandardStreamableHTTPServerTransport` in stateless mode
@@ -113,7 +120,7 @@ async function handlePost(
 app.http('mcp', {
   route: 'mcp',
   methods: ['GET', 'POST', 'DELETE'],
-  authLevel: 'anonymous',
+  authLevel: 'function',
   handler: (request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> => {
     if (request.method === 'POST') {
       return handlePost(request, context);
