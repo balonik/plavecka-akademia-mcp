@@ -9,9 +9,13 @@ name: Deploy to Azure Functions
 # instead uploads the built package to a fixed blob URL and asks the platform to pick it up:
 #   1. Upload the zip to the storage account's "deployments" container via a container-scoped
 #      SAS token (data-plane only, no Azure AD login needed for this step).
-#   2. Call /admin/host/synctriggers with a dedicated host key, since the blob URL itself never
+#   2. Call /admin/host/synctriggers with the app's master key, since the blob URL itself never
 #      changes between deploys (only its content does) and the platform doesn't notice a new
 #      package at the same URL on its own.
+#
+# The /admin/* endpoints are master-key-only -- a named host key gets a 401 there, however it was
+# provisioned. The key goes in the x-functions-key header rather than ?code= so it can't leak via
+# request logging on the platform side.
 on:
   workflow_run:
     workflows: [CI]
@@ -72,6 +76,25 @@ jobs:
             --overwrite
 
       - name: Sync triggers so the platform picks up the new package
+        env:
+          SYNC_KEY: ${{ secrets.AZURE_FUNCTIONAPP_SYNC_KEY }}
+          APP_NAME: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
         run: |
-          curl -sf -X POST \
-            "https://${{ vars.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/admin/host/synctriggers?code=${{ secrets.AZURE_FUNCTIONAPP_SYNC_KEY }}"
+          if [ -z "$SYNC_KEY" ]; then
+            echo "::error::AZURE_FUNCTIONAPP_SYNC_KEY is empty. Set it to the Function App's" \
+                 "_master key (Portal -> App keys -> _master, or 'az functionapp keys list')." \
+                 "If the repo uses a 'production' Environment, the secret must be visible to it."
+            exit 1
+          fi
+          status=$(curl -sS -X POST \
+            -o response.txt -w '%{http_code}' \
+            -H "x-functions-key: $SYNC_KEY" \
+            "https://${APP_NAME}.azurewebsites.net/admin/host/synctriggers")
+          echo "synctriggers returned HTTP $status"
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error::Trigger sync failed with HTTP $status. A 401 here almost always means" \
+                 "the key is a host/function key rather than the master key -- /admin/* is" \
+                 "master-key-only."
+            cat response.txt
+            exit 1
+          fi
