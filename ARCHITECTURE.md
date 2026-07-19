@@ -102,9 +102,9 @@ workflow instead:
 
 1. Uploads `deploy.zip` to the storage account's `deployments` container using a container-scoped
    SAS token (data-plane only — no Azure AD login needed for this step).
-2. Calls `POST /admin/host/synctriggers?code=<key>` using a dedicated host-level key, since the
-   blob URL itself never changes between deploys (only its content does) and the platform doesn't
-   notice a new package at the same URL on its own.
+2. Calls `POST /admin/host/synctriggers` with the app's master key in an `x-functions-key` header,
+   since the blob URL itself never changes between deploys (only its content does) and the platform
+   doesn't notice a new package at the same URL on its own.
 
 The Function App fetches that same fixed blob URL on startup via its own **managed identity** — no
 storage key or SAS is ever needed on the read side.
@@ -119,19 +119,26 @@ storage key or SAS is ever needed on the read side.
 
 Copy it verbatim (leading `?` included — the workflow strips it) into the GitHub secret below.
 
-### 2. Get a host key for trigger syncing
+### 2. Get the master key for trigger syncing
 
-Create a **dedicated named host key** for this one purpose, so it can be revoked independently of
-the `claude-connector` function key used by the connector itself:
+The runtime's `/admin/*` endpoints — including `synctriggers` — accept **only the master key**
+(`_master`). A dedicated named host key would be preferable for blast-radius reasons, and an earlier
+version of this doc told you to create one, but the platform returns 401 for host and function keys
+on `/admin/*` regardless of how they were provisioned. See
+[Work with access keys in Azure Functions](https://learn.microsoft.com/azure/azure-functions/function-keys-how-to#understand-keys)
+("Call an `admin` endpoint → Master-only").
 
 ```bash
-az functionapp keys set \
+az functionapp keys list \
   --name <your-function-app-name> \
   --resource-group <your-resource-group> \
-  --key-type host \
-  --key-name ci-sync-triggers \
-  --key-value "$(openssl rand -base64 32)"
+  --query "masterKey" -o tsv
 ```
+
+The master key grants administrative access to the whole app, so treat this secret accordingly:
+scope it to the `production` Environment, and rotate it (Portal → **App keys** → `_master` →
+**Renew**) if it's ever exposed. The workflow sends it in an `x-functions-key` header rather than a
+`?code=` query parameter to keep it out of request logs.
 
 ### 3. Configure the repository
 
@@ -142,7 +149,7 @@ Set these under **Settings → Secrets and variables → Actions**:
 | `AZURE_FUNCTIONAPP_NAME`     | Variable | The Function App's name                                              |
 | `AZURE_STORAGE_ACCOUNT_NAME` | Variable | The storage account's name (Terraform output `storage_account_name`) |
 | `AZURE_STORAGE_DEPLOY_SAS`   | Secret   | The SAS token from step 1                                            |
-| `AZURE_FUNCTIONAPP_SYNC_KEY` | Secret   | The host key from step 2                                             |
+| `AZURE_FUNCTIONAPP_SYNC_KEY` | Secret   | The master key from step 2                                           |
 
 Optionally create a `production` GitHub Environment (matching `environment: production` in the
 workflow) if you want required reviewers or a wait timer on deploys.
