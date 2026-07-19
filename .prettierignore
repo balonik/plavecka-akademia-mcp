@@ -1,0 +1,4 @@
+test/fixtures/
+dist/
+coverage/
+node_modules/

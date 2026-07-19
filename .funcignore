@@ -1,0 +1,16 @@
+*.ts
+tsconfig.json
+eslint.config.js
+.eslintrc*
+.prettierrc*
+.prettierignore
+vitest.config.ts
+.vscode
+.vs
+.github
+.git*
+test
+coverage
+*.log
+local.settings.json
+*.md

@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+# Fixtures are byte-faithful recordings of what the site actually served, so they are
+# exempt from eol normalisation -- rewriting their line endings would alter the evidence.
+# Not authored code, and too large to be worth diffing.
+test/fixtures/*.html -text linguist-vendored -diff
