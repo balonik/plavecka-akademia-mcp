@@ -2,20 +2,17 @@ name: Deploy to Azure Functions
 
 # Runs after CI succeeds on `main`, plus an on-demand manual trigger.
 #
-# The Function App runs on a Linux Consumption plan, which only supports deploying via
-# WEBSITE_RUN_FROM_PACKAGE=<URL> -- not the classic Kudu zip-push that Azure/functions-action
-# and `az functionapp deployment source config-zip` normally use (that path reliably 503s on
-# this plan type; see the ops repo's Terraform for the app-setting wiring). So this workflow
-# instead uploads the built package to a fixed blob URL and asks the platform to pick it up:
-#   1. Upload the zip to the storage account's "deployments" container via a container-scoped
-#      SAS token (data-plane only, no Azure AD login needed for this step).
-#   2. Call /admin/host/synctriggers with the app's master key, since the blob URL itself never
-#      changes between deploys (only its content does) and the platform doesn't notice a new
-#      package at the same URL on its own.
+# The Function App runs on a Windows Consumption plan, which supports the classic Kudu zip-push
+# (`az functionapp deployment source config-zip`) together with WEBSITE_RUN_FROM_PACKAGE="1" (set in
+# the ops repo's Terraform). So this workflow just builds the package and pushes it in one step --
+# the platform stores and mounts it itself. No deployment blob, no SAS, and no
+# /admin/host/synctriggers call (all of which only existed to work around Linux Consumption's
+# URL-only WEBSITE_RUN_FROM_PACKAGE, which reliably wedged the container after each swap).
 #
-# The /admin/* endpoints are master-key-only -- a named host key gets a 401 there, however it was
-# provisioned. The key goes in the x-functions-key header rather than ?code= so it can't leak via
-# request logging on the platform side.
+# Auth is passwordless via OIDC: azure/login@v2 federates into a user-assigned identity (see the ops
+# repo's github_oidc.tf), so there are no long-lived deploy secrets in this repo -- only the
+# non-secret AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID / AZURE_RESOURCE_GROUP /
+# AZURE_FUNCTIONAPP_NAME variables.
 on:
   workflow_run:
     workflows: [CI]
@@ -25,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write # required for OIDC federation with azure/login
 
 concurrency:
   group: deploy-${{ github.workflow }}
@@ -64,61 +62,17 @@ jobs:
           cp package.json package-lock.json host.json package-stage/
           (cd package-stage && zip -r -q ../deploy.zip .)
 
-      - name: Upload package to blob storage
-        run: |
-          sas="${{ secrets.AZURE_STORAGE_DEPLOY_SAS }}"
-          az storage blob upload \
-            --account-name "${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}" \
-            --container-name deployments \
-            --name package.zip \
-            --file deploy.zip \
-            --sas-token "${sas#\?}" \
-            --overwrite
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Sync triggers so the platform picks up the new package
-        env:
-          SYNC_KEY: ${{ secrets.AZURE_FUNCTIONAPP_SYNC_KEY }}
-          APP_NAME: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
+      - name: Deploy package (zip-push)
         run: |
-          if [ -z "$SYNC_KEY" ]; then
-            echo "::error::AZURE_FUNCTIONAPP_SYNC_KEY is empty. Set it to the Function App's" \
-                 "_master key (Portal -> App keys -> _master, or 'az functionapp keys list')." \
-                 "If the repo uses a 'production' Environment, the secret must be visible to it."
-            exit 1
-          fi
-          attempt_sync() {
-            curl -sS -X POST \
-              -o response.txt -w '%{http_code}' \
-              -H "x-functions-key: $SYNC_KEY" \
-              "https://${APP_NAME}.azurewebsites.net/admin/host/synctriggers"
-          }
-          status=$(attempt_sync)
-          # Right after WEBSITE_RUN_FROM_PACKAGE points at a new blob, the platform can take a
-          # little while to remount the package; /admin/* (and even the SCM site) transiently 503
-          # during that window. Retry with backoff before treating it as a real failure.
-          attempts=1
-          while [ "$status" -eq 503 ] && [ "$attempts" -lt 6 ]; do
-            wait=$((attempts * 10))
-            echo "synctriggers returned 503 (attempt $attempts) -- retrying in ${wait}s"
-            sleep "$wait"
-            status=$(attempt_sync)
-            attempts=$((attempts + 1))
-          done
-          echo "synctriggers returned HTTP $status after $attempts attempt(s)"
-          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
-            if [ "$status" -eq 401 ]; then
-              echo "::error::Trigger sync failed with HTTP 401. /admin/* is master-key-only --" \
-                   "check that AZURE_FUNCTIONAPP_SYNC_KEY holds the _master key, not a host or" \
-                   "function key."
-            elif [ "$status" -eq 503 ]; then
-              echo "::error::Trigger sync still failing with HTTP 503 after $attempts attempts." \
-                   "The app itself is likely unavailable (check the site root and the SCM/Kudu" \
-                   "site, not just this endpoint) rather than anything key-related -- this usually" \
-                   "means the platform is stuck after a WEBSITE_RUN_FROM_PACKAGE swap and needs a" \
-                   "manual restart (az functionapp restart)."
-            else
-              echo "::error::Trigger sync failed with HTTP $status."
-            fi
-            cat response.txt
-            exit 1
-          fi
+          az functionapp deployment source config-zip \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_FUNCTIONAPP_NAME }}" \
+            --src deploy.zip \
+            --build-remote false
