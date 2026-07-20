@@ -48,9 +48,9 @@ describe('parseDetail', () => {
   });
 
   it('never contradicts its own session calendar, even long after the course has ended', () => {
-    // Regression for REVIEW.md H3: with a forward-only year search this returned a 2027
-    // dateRange while `sessions` (read from explicit rel="2026-07-22" attributes) said
-    // 2026 -- a self-contradicting response in a single payload.
+    // Regression: with a forward-only year search this returned a 2027 dateRange while
+    // `sessions` (read from explicit rel="2026-07-22" attributes) said 2026 -- a
+    // self-contradicting response in a single payload.
     const detail = parseDetail(html, { referenceDate: new Date('2026-12-01T00:00:00Z') });
     const firstSession = detail.sessions[0];
     const lastSession = detail.sessions.at(-1);

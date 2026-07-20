@@ -33,7 +33,6 @@ their slug, age range, whether they offer `*`/`**` sub-levels, and the centres e
   startAfter?: string,     // ISO date
   startBefore?: string,    // ISO date
   maxPrice?: number,
-  onlyAvailable?: boolean,
   limit?: number,
   offset?: number,
 }
@@ -60,7 +59,6 @@ per-session calendar.
   categories: { category: string, level?: "*" | "**" | "any" }[],
   location?: string,
   day?: string,
-  onlyAvailable?: boolean,
   limit?: number,
   offset?: number,
 }

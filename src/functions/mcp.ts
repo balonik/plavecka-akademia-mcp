@@ -112,8 +112,9 @@ async function handlePost(
     context.error('Error handling MCP request', err);
     return { status: 500, jsonBody: INTERNAL_ERROR_BODY };
   } finally {
-    await transport.close();
-    await server.close();
+    // allSettled, not two sequential awaits: if closing the transport rejects, the server
+    // must still be closed, or its instance leaks for this invocation.
+    await Promise.allSettled([transport.close(), server.close()]);
   }
 }
 

@@ -67,18 +67,6 @@ describe('list_courses', () => {
     }
   });
 
-  it('onlyAvailable keeps every course, since all three known capacity classes mean "bookable"', async () => {
-    // `parseList` always sets `capacity.available = true` for the three known classes
-    // (and, defensively, for an unrecognised one too) -- there is no observed "sold out"
-    // state on the live site. This documents that behaviour rather than a filtering bug.
-    const unfiltered = await listCourses({ category: 'korytnacka' }, { fetchFn: fetchAll });
-    const filtered = await listCourses(
-      { category: 'korytnacka', onlyAvailable: true },
-      { fetchFn: fetchAll },
-    );
-    expect(filtered.total).toBe(unfiltered.total);
-  });
-
   it('limit/offset slice the full result while total still reflects the whole set', async () => {
     const full = await listCourses({ category: 'korytnacka' }, { fetchFn: fetchAll });
     expect(full.total).toBe(140);
@@ -197,6 +185,25 @@ describe('get_course', () => {
     const detail = await getCourse({ courseId: '1313637' }, { fetchFn: impl });
     expect(detail.id).toBe('1313637');
     expect(calledUrls).toEqual(['https://plaveckaakademia.sk/node/1313637']);
+  });
+
+  it('strips any query string and fragment from a supplied url before fetching', async () => {
+    const calledUrls: string[] = [];
+    const impl: FetchFn = async (input) => {
+      calledUrls.push(urlOf(input));
+      return htmlResponse(detailHtml);
+    };
+    await getCourse(
+      {
+        url: 'https://plaveckaakademia.sk/plavecky-kurz/plavanie-pre-deti-zralok/plavaren-baronka-raca/1313637?destination=%2Fadmin&page=9#frag',
+      },
+      { fetchFn: impl },
+    );
+    // The path identifies the course; a caller-supplied query would otherwise reach upstream
+    // and fragment the cache with keys that all resolve to the same page.
+    expect(calledUrls).toEqual([
+      'https://plaveckaakademia.sk/plavecky-kurz/plavanie-pre-deti-zralok/plavaren-baronka-raca/1313637',
+    ]);
   });
 
   it('rejects a non-numeric courseId without fetching anything', async () => {

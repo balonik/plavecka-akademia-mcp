@@ -116,7 +116,11 @@ Run a live check before trusting a scraping change.
   signature to type aliases. `@typescript-eslint/consistent-type-definitions` is disabled for this
   reason — switching them back to `interface` breaks the build.
 - Parsers fail loudly. Prefer throwing with a message naming the selector over returning partial or
-  defaulted data.
+  defaulted data. This is all-or-nothing per listing: `parseRow` throwing on one malformed row fails
+  the whole category (140 rows) rather than dropping that row. That's the intended trade-off — a
+  silently missing course is the plausible-looking wrong answer we refuse to emit — at the cost of
+  availability if one upstream row is ever malformed. Don't "make it resilient" by skipping bad rows
+  without also adding a drift threshold, or you reintroduce the silent-degradation failure mode.
 
 ## Gotchas for the environment
 

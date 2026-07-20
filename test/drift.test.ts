@@ -5,8 +5,6 @@
  * has actually stopped understanding the page. Every test here mutates a real fixture the
  * way a site redesign would (renaming one class or id) and asserts we THROW rather than
  * returning a well-formed, empty, entirely wrong answer.
- *
- * See REVIEW.md H1 and H2.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -25,7 +23,7 @@ beforeEach(() => {
   clearCache();
 });
 
-describe('parseList drift detection (REVIEW.md H1)', () => {
+describe('parseList drift detection', () => {
   const html = readFixture('korytnacka-all.html');
 
   it('parses the intact fixture (baseline for the mutations below)', () => {
@@ -72,16 +70,16 @@ describe('parseList drift detection (REVIEW.md H1)', () => {
   });
 });
 
-describe('parseDetail drift detection (AUDIT.md B1)', () => {
+describe('parseDetail drift detection', () => {
   const html = readFixture('detail-1313637.html');
 
   it('parses the intact fixture (baseline for the mutations below)', () => {
     expect(parseDetail(html).id).toBe('1313637');
   });
 
-  // The listing parser threw for every one of these; the detail parser used to return a
-  // well-formed course with an empty schedule / centre / address / availability instead --
-  // the exact "plausible-looking wrong answer" this suite exists to prevent.
+  // parseDetail used to return a well-formed course with an empty schedule / centre /
+  // address / availability on each of these, rather than throwing like its sibling
+  // parseList -- the exact "plausible-looking wrong answer" this suite exists to prevent.
   const mutations: { name: string; mutate: (input: string) => string; expected: RegExp }[] = [
     {
       name: 'the day/time block is renamed',
@@ -112,15 +110,15 @@ describe('parseDetail drift detection (AUDIT.md B1)', () => {
   }
 });
 
-describe('listCategories drift detection (REVIEW.md H2)', () => {
+describe('listCategories drift detection', () => {
   it('throws on a junk page rather than reporting every category as offered nowhere', async () => {
     const fetchFn: FetchFn = async () => htmlResponse('<html><body>hello</body></html>');
     await expect(listCategories({ fetchFn })).rejects.toThrow();
   });
 
   it('throws when the age-group label drifts, instead of reporting an empty age range', async () => {
-    // AUDIT.md B2: extractAgeRange used to return '' here while its neighbour extractCentres
-    // threw, so every category came back claiming to have no age range at all.
+    // extractAgeRange used to return '' here while its neighbour extractCentres threw, so
+    // every category came back claiming to have no age range at all.
     const drifted = readFixture('korytnacka-all.html').replace(
       /<strong>[^<]*<\/strong>/g,
       '<strong>RENAMED</strong>',

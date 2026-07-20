@@ -87,6 +87,12 @@ export function parseList(html: string, options: ParseListOptions = {}): CourseS
   const rows = viewContent.children('div.views-row');
   const courses: CourseSummary[] = [];
   rows.each((_i, rowEl) => {
+    // parseRow throws on any unparseable field (price, date, missing selector). That is
+    // deliberate all-or-nothing: one malformed row fails the whole category listing rather
+    // than dropping a row, because a silently missing course is exactly the plausible-looking
+    // wrong answer this codebase refuses to emit (see CLAUDE.md, "Parsers fail loudly"). The
+    // trade-off is availability -- a single upstream typo takes the category offline until
+    // it's fixed or the parser is taught to tolerate it -- and it's accepted knowingly.
     courses.push(parseRow($, $(rowEl), options.referenceDate));
   });
   return courses;

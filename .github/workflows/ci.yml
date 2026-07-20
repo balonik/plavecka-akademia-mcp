@@ -31,6 +31,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Fail the build on a known high/critical advisory in the dependency tree. Dependabot
+      # opens PRs for these, but nothing previously *blocked* merging a vulnerable tree; this
+      # is the gate. `--omit=dev` would hide advisories in the toolchain, so the whole tree is
+      # audited. Bump the level rather than deleting this step if a low-severity advisory with
+      # no available fix ever wedges CI.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
       - name: Run typecheck, lint, format check and tests
         run: npm run check
 

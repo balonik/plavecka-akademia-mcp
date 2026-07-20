@@ -25,7 +25,6 @@ export interface FindCommonSlotsInput {
   categories: CategoryLevelRequest[];
   location?: string | undefined;
   day?: string | undefined;
-  onlyAvailable?: boolean | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }
@@ -122,7 +121,6 @@ export async function findCommonSlots(
 
   const centre = input.location !== undefined ? resolveCentre(input.location) : undefined;
   const day = input.day !== undefined ? resolveDay(input.day) : undefined;
-  const onlyAvailable = input.onlyAvailable ?? false;
 
   const perRequirement = await mapWithConcurrency(
     requirements,
@@ -138,9 +136,6 @@ export async function findCommonSlots(
         // Zero-star rows come back under BOTH upstream uroven[] values, so a specific
         // level must post-filter on the exact star count. See CLAUDE.md site-fact #4.
         courses = courses.filter((c) => c.level === req.level);
-      }
-      if (onlyAvailable) {
-        courses = courses.filter((c) => c.capacity.available);
       }
       return { requirement: req, courses };
     },
@@ -235,12 +230,6 @@ const inputSchema = {
     .optional()
     .describe('Restrict to a single centre, diacritic/case-insensitive.'),
   day: z.string().optional().describe('Restrict to a single weekday, Slovak or English.'),
-  onlyAvailable: z
-    .boolean()
-    .optional()
-    .describe(
-      'Forward-compatibility hook, currently a no-op: the site has no sold-out state, so every listed course is bookable (free / last one / last two places) and this narrows nothing. Do not pass it expecting fewer results.',
-    ),
   limit: z
     .number()
     .int()

@@ -26,7 +26,6 @@ export interface ListCoursesInput {
   startAfter?: string | undefined;
   startBefore?: string | undefined;
   maxPrice?: number | undefined;
-  onlyAvailable?: boolean | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }
@@ -72,7 +71,6 @@ export async function listCourses(
   const day = input.day !== undefined ? resolveDay(input.day) : undefined;
   const level = input.level ?? 'any';
   const { timeFrom, timeTo, startAfter, startBefore, maxPrice } = input;
-  const onlyAvailable = input.onlyAvailable ?? false;
   const offset = input.offset ?? 0;
   const { limit } = input;
 
@@ -115,9 +113,6 @@ export async function listCourses(
   }
   if (maxPrice !== undefined) {
     courses = courses.filter((c) => c.price.amount <= maxPrice);
-  }
-  if (onlyAvailable) {
-    courses = courses.filter((c) => c.capacity.available);
   }
 
   const paged = applyPaging(courses, limit, offset);
@@ -185,12 +180,6 @@ const inputSchema = {
     .optional()
     .describe('Only courses starting on or before this ISO date.'),
   maxPrice: z.number().positive().optional(),
-  onlyAvailable: z
-    .boolean()
-    .optional()
-    .describe(
-      'Forward-compatibility hook, currently a no-op: the site has no sold-out state, so every listed course is bookable (free / last one / last two places) and this narrows nothing. Do not pass it expecting fewer results.',
-    ),
   limit: z.number().int().positive().optional(),
   offset: z.number().int().nonnegative().optional(),
 };

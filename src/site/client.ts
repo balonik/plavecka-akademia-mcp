@@ -151,14 +151,18 @@ async function doFetch(url: string, fetchFn: FetchFn): Promise<string> {
     currentUrl = new URL(location, currentUrl).toString();
   }
 
-  url = currentUrl;
-
+  // `currentUrl` is now the final hop (== the original `url` when there was no redirect);
+  // the checks below name it so an error points at the URL that actually failed, without
+  // mutating the `url` parameter.
   if (response.status >= 500) {
-    throw new UpstreamError(`Upstream server error ${String(response.status)} for ${url}`, true);
+    throw new UpstreamError(
+      `Upstream server error ${String(response.status)} for ${currentUrl}`,
+      true,
+    );
   }
   if (!response.ok) {
     throw new UpstreamError(
-      `Upstream request failed with status ${String(response.status)} for ${url}`,
+      `Upstream request failed with status ${String(response.status)} for ${currentUrl}`,
       false,
     );
   }
@@ -166,7 +170,7 @@ async function doFetch(url: string, fetchFn: FetchFn): Promise<string> {
   const lengthHeader = response.headers.get('content-length');
   if (lengthHeader !== null && Number(lengthHeader) > MAX_RESPONSE_BYTES) {
     throw new UpstreamError(
-      `Response too large (${lengthHeader} bytes, cap is ${String(MAX_RESPONSE_BYTES)}) for ${url}`,
+      `Response too large (${lengthHeader} bytes, cap is ${String(MAX_RESPONSE_BYTES)}) for ${currentUrl}`,
       false,
     );
   }
@@ -174,7 +178,7 @@ async function doFetch(url: string, fetchFn: FetchFn): Promise<string> {
   const text = await response.text();
   if (text.length > MAX_RESPONSE_BYTES) {
     throw new UpstreamError(
-      `Response body exceeded the ${String(MAX_RESPONSE_BYTES)} byte cap for ${url}`,
+      `Response body exceeded the ${String(MAX_RESPONSE_BYTES)} byte cap for ${currentUrl}`,
       false,
     );
   }

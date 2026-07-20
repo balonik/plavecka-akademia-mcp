@@ -1,9 +1,8 @@
 /**
  * Regression tests for review findings that aren't about listing-parser drift (that lives in
- * drift.test.ts): redirect handling (M1), the wasted second upstream request (M4),
- * duplicate-category collapse (L2), limit/offset clamping (L3) and absolute-href URL building
- * (L5), plus the detail-page URL findings from the later audit (S1, S2) and the paging and
- * time-validation findings (B3, B4).
+ * drift.test.ts): redirect handling, the wasted second upstream request, duplicate-category
+ * collapse, limit/offset clamping, absolute-href URL building on both parsers, and the
+ * find_common_slots paging and list_courses time-validation findings.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -26,7 +25,7 @@ beforeEach(() => {
   clearCache();
 });
 
-describe('redirect handling (REVIEW.md M1)', () => {
+describe('redirect handling', () => {
   const detailUrl = 'https://plaveckaakademia.sk/plavecky-kurz/a/b/1313637';
 
   it('re-checks the allowlist on every hop and refuses to follow off-host', async () => {
@@ -63,7 +62,7 @@ describe('redirect handling (REVIEW.md M1)', () => {
   });
 });
 
-describe('listing pagination cost (REVIEW.md M4)', () => {
+describe('listing pagination cost', () => {
   it('reads the header count and issues exactly one upstream request', async () => {
     const html = readFixture('korytnacka-all.html');
     const fetchFn = vi.fn<FetchFn>(async () => htmlResponse(html));
@@ -84,7 +83,7 @@ describe('listing pagination cost (REVIEW.md M4)', () => {
   });
 });
 
-describe('find_common_slots duplicate categories (REVIEW.md L2)', () => {
+describe('find_common_slots duplicate categories', () => {
   it('collapses aliases of the same category instead of counting it twice', async () => {
     const fetchFn: FetchFn = async () => htmlResponse(readFixture('korytnacka-all.html'));
 
@@ -102,7 +101,7 @@ describe('find_common_slots duplicate categories (REVIEW.md L2)', () => {
   });
 });
 
-describe('limit/offset clamping (REVIEW.md L3)', () => {
+describe('limit/offset clamping', () => {
   const fetchAll: FetchFn = async () => htmlResponse(readFixture('korytnacka-all.html'));
 
   it('treats a negative offset as 0 rather than slicing from the end', async () => {
@@ -128,7 +127,7 @@ describe('limit/offset clamping (REVIEW.md L3)', () => {
   });
 });
 
-describe('course URL construction (REVIEW.md L5)', () => {
+describe('listing-page URL construction', () => {
   it('does not concatenate an absolute href onto the base URL', () => {
     const html = readFixture('zralok-all.html').replace(
       '/plavecky-kurz/plavanie-pre-deti-zralok/plavaren-baronka-raca/1313637',
@@ -141,7 +140,7 @@ describe('course URL construction (REVIEW.md L5)', () => {
   });
 });
 
-describe('find_common_slots paging (AUDIT.md B3)', () => {
+describe('find_common_slots paging', () => {
   const fetchFn: FetchFn = async () => htmlResponse(readFixture('korytnacka-all.html'));
 
   it('reports the full match count while returning only the requested slice', async () => {
@@ -171,7 +170,7 @@ describe('find_common_slots paging (AUDIT.md B3)', () => {
   });
 });
 
-describe('time filter validation (AUDIT.md B4)', () => {
+describe('time filter validation', () => {
   const fetchFn: FetchFn = async () => htmlResponse(readFixture('korytnacka-all.html'));
 
   it('rejects an unparseable timeFrom instead of silently returning everything', async () => {
@@ -194,7 +193,7 @@ describe('time filter validation (AUDIT.md B4)', () => {
   });
 });
 
-describe('detail-page URL construction (AUDIT.md S1, S2)', () => {
+describe('detail-page URL construction', () => {
   const html = readFixture('detail-1313637.html');
 
   it('rejects an off-site canonical link instead of reporting it as the course URL', () => {
@@ -209,8 +208,9 @@ describe('detail-page URL construction (AUDIT.md S1, S2)', () => {
 
   it('rejects an off-site booking link rather than emitting a mangled URL', () => {
     // Previously produced "https://plaveckaakademia.skhttps://evil.example/steal" by
-    // concatenation -- the same defect L5 fixed in the listing parser. bookingUrl is the
-    // field a human is most likely to actually click.
+    // concatenation -- the same class of defect the "listing-page URL construction" tests
+    // above guard in parseList. bookingUrl is the field a human is most likely to actually
+    // click.
     const drifted = html.replace(
       /(<a[^>]*class="[^"]*prihlasit[^"]*"[^>]*href=")[^"]*"/,
       '$1https://evil.example/steal"',

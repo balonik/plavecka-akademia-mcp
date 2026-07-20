@@ -39,7 +39,11 @@ function validateAllowedUrl(rawUrl: string): string {
       `"url" path "${parsed.pathname}" is not a course detail page; expected /plavecky-kurz/<category>/<pool>/<id> or /node/<id>.`,
     );
   }
-  return parsed.toString();
+  // Rebuild from origin + path only, dropping any query string or fragment. The path is
+  // what identifies the course; a caller-supplied `?...`/`#...` would otherwise pass
+  // through to the upstream request (letting a Drupal query parameter vary the response)
+  // and needlessly fragment the shared cache with keys that all resolve to one page.
+  return `${parsed.origin}${parsed.pathname}`;
 }
 
 function resolveTargetUrl(input: GetCourseInput): string {
