@@ -83,31 +83,26 @@ concepts; `src/tools/` has no HTML.
 
 ## Deploying
 
-You need an Azure Function App (Node.js 24, Linux, Consumption plan) and its resource group, plus a
-private blob container for deployment packages. A Terraform configuration for all of this exists in
-a companion ops repo; creating the resources by hand via the Azure Portal or `az` CLI works too, but
-you'll need to replicate that same shape (see the ops repo's `storage.tf`, `deploy_sas.tf` and
-`function_app.tf`).
+You need an Azure Function App (Node.js 24, **Windows, Consumption plan**) and its resource group. A
+Terraform configuration for all of this exists in a companion ops repo; creating the resources by
+hand via the Azure Portal or `az` CLI works too, but you'll need to replicate that same shape (see
+the ops repo's `service_plan.tf`, `function_app.tf`, and `github_oidc.tf`).
 
 `.github/workflows/deploy.yml` runs after a successful CI run on `main`, plus on-demand via
 `workflow_dispatch`: checkout → `npm ci` → `npm run build` → `npm ci --omit=dev` (prune to
-production deps) → zip the payload → upload it to blob storage → ask the platform to pick up the
-new package.
+production deps) → zip the payload → `az functionapp deployment source config-zip`.
 
-That last two-step handoff, instead of a more typical single zip-push action, exists because the
-Function App runs on a **Linux Consumption plan**, which only supports deploying via
-`WEBSITE_RUN_FROM_PACKAGE=<URL>` — the classic Kudu zip-push that `Azure/functions-action` and
-`az functionapp deployment source config-zip` normally use reliably 503s on this plan type. So the
-workflow instead:
+That's a single classic zip-push: on a **Windows Consumption plan** the app runs from a local
+package (`WEBSITE_RUN_FROM_PACKAGE="1"`, set in the ops repo's Terraform), so the platform stores and
+mounts the pushed zip itself. There's no deployment blob, no SAS, and no `/admin/host/synctriggers`
+call — that whole handoff only existed to work around **Linux** Consumption's URL-only
+`WEBSITE_RUN_FROM_PACKAGE`, which reliably wedged the container (site _and_ Kudu returning 503) after
+every package swap, and which also caps Node at v22. Windows Consumption supports Node 24 and the
+ordinary zip-push, so the mechanism collapses to one step.
 
-1. Uploads `deploy.zip` to the storage account's `deployments` container using a container-scoped
-   SAS token (data-plane only — no Azure AD login needed for this step).
-2. Calls `POST /admin/host/synctriggers` with the app's master key in an `x-functions-key` header,
-   since the blob URL itself never changes between deploys (only its content does) and the platform
-   doesn't notice a new package at the same URL on its own.
-
-The Function App fetches that same fixed blob URL on startup via its own **managed identity** — no
-storage key or SAS is ever needed on the read side.
+The workflow authenticates to Azure **passwordlessly via OIDC**: `azure/login@v2` federates into a
+user-assigned managed identity (ops repo's `github_oidc.tf`) scoped to `Website Contributor` on the
+Function App. No long-lived deploy credential is stored in GitHub — only non-secret identifiers.
 
 Two related settings exist for reasons that aren't obvious from the files themselves:
 
@@ -124,57 +119,33 @@ Two related settings exist for reasons that aren't obvious from the files themse
   exactly one route: the path carries no diagnostic signal. Invocation traces, failures and
   durations are unaffected.
 
-### 1. Get the deploy SAS token
+### 1. Configure the repository
 
-- **From Terraform:** the ops repo's `terraform apply` produces a `deploy_container_sas` output
-  (marked sensitive) — `terraform output -raw deploy_container_sas`.
-- **From the Portal:** the `deployments` container → **Shared access tokens**, with **Write** and
-  **Create** permissions only (no **Read**/**List**/**Delete** — the workflow only ever writes one
-  named blob), HTTPS only, and a long expiry.
+Deployment auth is OIDC — there are **no secrets**, only non-secret variables. The ops repo's
+`terraform apply` provisions the user-assigned identity and its federated credential, and its
+outputs supply every value below. Set these under **Settings → Secrets and variables → Actions**
+(all as **Variables**):
 
-Copy it verbatim (leading `?` included — the workflow strips it) into the GitHub secret below.
+| Name                     | Value / source                                  |
+| ------------------------ | ----------------------------------------------- |
+| `AZURE_CLIENT_ID`        | `terraform output -raw github_deploy_client_id` |
+| `AZURE_TENANT_ID`        | `terraform output -raw tenant_id`               |
+| `AZURE_SUBSCRIPTION_ID`  | `terraform output -raw subscription_id`         |
+| `AZURE_RESOURCE_GROUP`   | `terraform output -raw resource_group_name`     |
+| `AZURE_FUNCTIONAPP_NAME` | `terraform output -raw function_app_name`       |
 
-### 2. Get the master key for trigger syncing
+The federated credential trusts this repo's `production` environment
+(`repo:<owner>/<name>:environment:production`), which is why the deploy job declares
+`environment: production` — create that GitHub Environment (and add reviewers/wait timers there if
+you want gated deploys). If you fork or rename the repo, update `github_repository` in the ops repo's
+`variables.tf` so the subject still matches.
 
-The runtime's `/admin/*` endpoints — including `synctriggers` — accept **only the master key**
-(`_master`). A dedicated named host key would be preferable for blast-radius reasons, and an earlier
-version of this doc told you to create one, but the platform returns 401 for host and function keys
-on `/admin/*` regardless of how they were provisioned. See
-[Work with access keys in Azure Functions](https://learn.microsoft.com/azure/azure-functions/function-keys-how-to#understand-keys)
-("Call an `admin` endpoint → Master-only").
-
-```bash
-az functionapp keys list \
-  --name <your-function-app-name> \
-  --resource-group <your-resource-group> \
-  --query "masterKey" -o tsv
-```
-
-The master key grants administrative access to the whole app, so treat this secret accordingly:
-scope it to the `production` Environment, and rotate it (Portal → **App keys** → `_master` →
-**Renew**) if it's ever exposed. The workflow sends it in an `x-functions-key` header rather than a
-`?code=` query parameter to keep it out of request logs.
-
-### 3. Configure the repository
-
-Set these under **Settings → Secrets and variables → Actions**:
-
-| Name                         | Kind     | Value                                                                |
-| ---------------------------- | -------- | -------------------------------------------------------------------- |
-| `AZURE_FUNCTIONAPP_NAME`     | Variable | The Function App's name                                              |
-| `AZURE_STORAGE_ACCOUNT_NAME` | Variable | The storage account's name (Terraform output `storage_account_name`) |
-| `AZURE_STORAGE_DEPLOY_SAS`   | Secret   | The SAS token from step 1                                            |
-| `AZURE_FUNCTIONAPP_SYNC_KEY` | Secret   | The master key from step 2                                           |
-
-Optionally create a `production` GitHub Environment (matching `environment: production` in the
-workflow) if you want required reviewers or a wait timer on deploys.
-
-### 4. Push to `main`
+### 2. Push to `main`
 
 Once CI succeeds on `main`, the deploy workflow runs automatically. You can also trigger it by hand
 from the Actions tab (`workflow_dispatch`).
 
-### 5. Get a function key and register the connector
+### 3. Get a function key and register the connector
 
 See [README.md's "Add it to Claude"](./README.md#add-it-to-claude) — same steps whether you're
 setting this up for the first time or pointing at a redeploy.

@@ -108,11 +108,12 @@ with explicit UTF-8 when scripting anything involving accented text.
 
 ## Deployment
 
-`.github/workflows/deploy.yml` runs automatically after CI succeeds on `main`, uploading a new
-package to blob storage and asking the platform to pick it up (the Linux Consumption plan this app
-runs on doesn't support classic zip-push deploys). See [ARCHITECTURE.md](./ARCHITECTURE.md#deploying)
-for the full mechanism and the one-time repo setup (SAS token, host key, secrets/variables). Keep
-any change to `deploy.yml` itself in its own commit, separate from unrelated PRs.
+`.github/workflows/deploy.yml` runs automatically after CI succeeds on `main`, building the package
+and zip-pushing it to the Windows Consumption Function App (`az functionapp deployment source
+config-zip`), authenticated passwordlessly via OIDC. See
+[ARCHITECTURE.md](./ARCHITECTURE.md#deploying) for the full mechanism and the one-time repo setup
+(the OIDC variables, no secrets). Keep any change to `deploy.yml` itself in its own commit, separate
+from unrelated PRs.
 
 ## License
 
