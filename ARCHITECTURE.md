@@ -100,12 +100,29 @@ call — that whole handoff only existed to work around **Linux** Consumption's 
 every package swap, and which also caps Node at v22. Windows Consumption supports Node 24 and the
 ordinary zip-push, so the mechanism collapses to one step.
 
-The workflow authenticates to Azure **passwordlessly via OIDC**: `azure/login@v2` federates into a
+The workflow authenticates to Azure **passwordlessly via OIDC**: `azure/login@v3` federates into a
 user-assigned managed identity (ops repo's `github_oidc.tf`) scoped to `Website Contributor` on the
-Function App. No long-lived deploy credential is stored in GitHub — only non-secret identifiers.
+Function App. No long-lived deploy credential is stored in GitHub — only non-secret identifiers. Use
+`v3`, not `v2`: `v2`'s `action.yml` is permanently pinned to the deprecated `node20` Actions runtime
+(never patched — the bump shipped as a new major version, v3.0.0), so `v2` will keep printing a Node
+20 deprecation warning indefinitely regardless of when you run it.
 
-Two related settings exist for reasons that aren't obvious from the files themselves:
+Several related settings exist for reasons that aren't obvious from the files themselves:
 
+- **The Function App runs 64-bit** (`use_32_bit_worker = false` in the ops repo's `function_app.tf`,
+  against the provider's own `true` default). Node.js 24 ships no 32-bit Windows build; left at the
+  default, the platform can't run the requested runtime and silently falls back to an ancient bundled
+  engine, which fails on modern syntax with `SyntaxError: Use of const in strict mode` — a startup
+  crash that gives no hint it's actually a bitness mismatch.
+- **The Portal shows "Your app is not configured for dynamic scaling."** — expected, left as-is.
+  Full dynamic scale-out on Windows Consumption needs an Azure Files connection
+  (`WEBSITE_CONTENTAZUREFILECONNECTIONSTRING` + `WEBSITE_CONTENTSHARE`), but Azure Files has no
+  managed-identity option — that setting can only be a real storage account connection string. Adding
+  it would reintroduce the one class of secret this setup otherwise avoids everywhere else (OIDC for
+  deploy, managed identity for `AzureWebJobsStorage`). For this app's traffic (personal/low-volume),
+  a single warm instance is enough, so the tradeoff isn't worth it. See [Storage considerations for
+  Azure Functions](https://learn.microsoft.com/azure/azure-functions/storage-considerations#storage-account-connection-setting)
+  if that calculus ever changes.
 - **`npm run build` uses `tsconfig.build.json`, not `tsconfig.json`.** The base config includes
   `test/**` so the tests are type-checked, but with `rootDir: "."` that also emitted `dist/test/`,
   which this workflow shipped to Azure (it zips `dist/` by hand, so `.funcignore` never applies).
