@@ -10,6 +10,7 @@ import { fetchPaginated, type ClientOptions } from '../site/client.js';
 import { buildCourseListUrl, LEVEL_TO_PARAM } from '../site/constants.js';
 import { resolveCategory, resolveCentre, resolveDay } from '../site/normalize.js';
 import { parseList, type CourseSummary } from '../site/parseList.js';
+import { applyPaging } from './paging.js';
 
 export interface ListCoursesInput {
   category: string;
@@ -37,11 +38,29 @@ export type ListCoursesOutput = {
   courses: CourseSummary[];
 };
 
-function timeToMinutes(time: string): number {
-  const parts = time.split(':');
-  const hours = Number(parts[0] ?? '0');
-  const minutes = Number(parts[1] ?? '0');
-  return hours * 60 + minutes;
+const TIME_PATTERN = /^(\d{1,2}):(\d{2})$/;
+
+/**
+ * Parses "HH:MM" into minutes, throwing on anything else.
+ *
+ * Validating rather than coercing matters: an unparseable value used to yield `NaN`, and
+ * every subsequent comparison against `NaN` is false, so a typo'd `timeFrom` silently
+ * returned the entire unfiltered listing as though it had been filtered. The zod schema
+ * guards the MCP transport only -- `listCourses` is exported and called directly.
+ */
+function timeToMinutes(time: string, field: string): number {
+  const match = TIME_PATTERN.exec(time.trim());
+  const hours = match?.[1];
+  const minutes = match?.[2];
+  if (hours === undefined || minutes === undefined) {
+    throw new Error(`"${field}" must be a time in HH:MM form, got "${time}".`);
+  }
+  const hoursNum = Number(hours);
+  const minutesNum = Number(minutes);
+  if (hoursNum > 23 || minutesNum > 59) {
+    throw new Error(`"${field}" is not a valid time of day, got "${time}".`);
+  }
+  return hoursNum * 60 + minutesNum;
 }
 
 export async function listCourses(
@@ -72,13 +91,17 @@ export async function listCourses(
   }
 
   if (day !== undefined || timeFrom !== undefined || timeTo !== undefined) {
-    const fromMinutes = timeFrom !== undefined ? timeToMinutes(timeFrom) : undefined;
-    const toMinutes = timeTo !== undefined ? timeToMinutes(timeTo) : undefined;
+    const fromMinutes = timeFrom !== undefined ? timeToMinutes(timeFrom, 'timeFrom') : undefined;
+    const toMinutes = timeTo !== undefined ? timeToMinutes(timeTo, 'timeTo') : undefined;
     courses = courses.filter((c) =>
       c.schedule.some((slot) => {
         if (day !== undefined && slot.day !== day) return false;
-        if (fromMinutes !== undefined && timeToMinutes(slot.from) < fromMinutes) return false;
-        if (toMinutes !== undefined && timeToMinutes(slot.to) > toMinutes) return false;
+        if (fromMinutes !== undefined && timeToMinutes(slot.from, 'schedule') < fromMinutes) {
+          return false;
+        }
+        if (toMinutes !== undefined && timeToMinutes(slot.to, 'schedule') > toMinutes) {
+          return false;
+        }
         return true;
       }),
     );
@@ -97,20 +120,13 @@ export async function listCourses(
     courses = courses.filter((c) => c.capacity.available);
   }
 
-  const total = courses.length;
-  // Clamp here rather than relying on the zod schema: the schema only guards the MCP
-  // transport, and this function is also called directly. A negative offset would
-  // otherwise reach Array.slice and silently return the LAST n rows as if they were the
-  // first, and a fractional limit would return nothing while reporting a non-zero total.
-  const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
-  const safeLimit =
-    limit === undefined || !Number.isFinite(limit) ? undefined : Math.max(0, Math.floor(limit));
-  const sliced =
-    safeLimit !== undefined
-      ? courses.slice(safeOffset, safeOffset + safeLimit)
-      : courses.slice(safeOffset);
-
-  return { total, returned: sliced.length, offset: safeOffset, courses: sliced };
+  const paged = applyPaging(courses, limit, offset);
+  return {
+    total: paged.total,
+    returned: paged.returned,
+    offset: paged.offset,
+    courses: paged.items,
+  };
 }
 
 const dayInputSchema = z.object({ day: z.string(), from: z.string(), to: z.string() });

@@ -11,6 +11,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { clearCache, type FetchFn } from '../src/site/client.js';
+import { parseDetail } from '../src/site/parseDetail.js';
 import { parseList } from '../src/site/parseList.js';
 import { listCategories } from '../src/tools/list_categories.js';
 import { listCourses } from '../src/tools/list_courses.js';
@@ -71,10 +72,61 @@ describe('parseList drift detection (REVIEW.md H1)', () => {
   });
 });
 
+describe('parseDetail drift detection (AUDIT.md B1)', () => {
+  const html = readFixture('detail-1313637.html');
+
+  it('parses the intact fixture (baseline for the mutations below)', () => {
+    expect(parseDetail(html).id).toBe('1313637');
+  });
+
+  // The listing parser threw for every one of these; the detail parser used to return a
+  // well-formed course with an empty schedule / centre / address / availability instead --
+  // the exact "plausible-looking wrong answer" this suite exists to prevent.
+  const mutations: { name: string; mutate: (input: string) => string; expected: RegExp }[] = [
+    {
+      name: 'the day/time block is renamed',
+      mutate: (input) => input.replaceAll('dayhod', 'day-hod'),
+      expected: /schedule|dayhod/i,
+    },
+    {
+      name: 'the centre heading is renamed',
+      mutate: (input) => input.replaceAll('centrum', 'centrum-x'),
+      expected: /centre|centrum/i,
+    },
+    {
+      name: 'the address block is renamed',
+      mutate: (input) => input.replaceAll('class="address"', 'class="address-x"'),
+      expected: /address/i,
+    },
+    {
+      name: 'the capacity/booking row is renamed',
+      mutate: (input) => input.replaceAll('prihlasit_row', 'prihlasit-row-x'),
+      expected: /capacity|prihlasit/i,
+    },
+  ];
+
+  for (const { name, mutate, expected } of mutations) {
+    it(`throws when ${name}, instead of returning a hollow course`, () => {
+      expect(() => parseDetail(mutate(html))).toThrow(expected);
+    });
+  }
+});
+
 describe('listCategories drift detection (REVIEW.md H2)', () => {
   it('throws on a junk page rather than reporting every category as offered nowhere', async () => {
     const fetchFn: FetchFn = async () => htmlResponse('<html><body>hello</body></html>');
     await expect(listCategories({ fetchFn })).rejects.toThrow();
+  });
+
+  it('throws when the age-group label drifts, instead of reporting an empty age range', async () => {
+    // AUDIT.md B2: extractAgeRange used to return '' here while its neighbour extractCentres
+    // threw, so every category came back claiming to have no age range at all.
+    const drifted = readFixture('korytnacka-all.html').replace(
+      /<strong>[^<]*<\/strong>/g,
+      '<strong>RENAMED</strong>',
+    );
+    const fetchFn: FetchFn = async () => htmlResponse(drifted);
+    await expect(listCategories({ fetchFn })).rejects.toThrow(/age range/i);
   });
 
   it('throws when the centre filter form id drifts', async () => {

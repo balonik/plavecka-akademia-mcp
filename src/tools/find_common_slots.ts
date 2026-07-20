@@ -12,6 +12,7 @@ import { buildCourseListUrl, LEVEL_TO_PARAM, SLOVAK_WEEKDAYS } from '../site/con
 import { resolveCategory, resolveCentre, resolveDay } from '../site/normalize.js';
 import { parseList, type CourseSummary } from '../site/parseList.js';
 import { courseSchema } from './list_courses.js';
+import { applyPaging } from './paging.js';
 
 export interface CategoryLevelRequest {
   category: string;
@@ -25,6 +26,8 @@ export interface FindCommonSlotsInput {
   location?: string | undefined;
   day?: string | undefined;
   onlyAvailable?: boolean | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
 }
 
 export interface CommonSlotGroup {
@@ -40,6 +43,9 @@ export interface CommonSlotMatch {
 }
 
 export type FindCommonSlotsOutput = {
+  total: number;
+  returned: number;
+  offset: number;
   matches: CommonSlotMatch[];
 };
 
@@ -191,7 +197,16 @@ export async function findCommonSlots(
     return SLOVAK_WEEKDAYS.indexOf(a.day) - SLOVAK_WEEKDAYS.indexOf(b.day);
   });
 
-  return { matches };
+  // Paged for the same reason list_courses is: a broad request (one category, no location)
+  // matches every centre/day pair and attaches every course to it, which is a larger payload
+  // than the unpaged listing this tool exists to spare the caller from reading.
+  const paged = applyPaging(matches, input.limit, input.offset);
+  return {
+    total: paged.total,
+    returned: paged.returned,
+    offset: paged.offset,
+    matches: paged.items,
+  };
 }
 
 const inputSchema = {
@@ -220,10 +235,25 @@ const inputSchema = {
     .optional()
     .describe('Restrict to a single centre, diacritic/case-insensitive.'),
   day: z.string().optional().describe('Restrict to a single weekday, Slovak or English.'),
-  onlyAvailable: z.boolean().optional(),
+  onlyAvailable: z
+    .boolean()
+    .optional()
+    .describe(
+      'Forward-compatibility hook, currently a no-op: the site has no sold-out state, so every listed course is bookable (free / last one / last two places) and this narrows nothing. Do not pass it expecting fewer results.',
+    ),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Maximum number of centre/day matches to return. Omit for all of them.'),
+  offset: z.number().int().nonnegative().optional(),
 };
 
 const outputSchema = {
+  total: z.number(),
+  returned: z.number(),
+  offset: z.number(),
   matches: z.array(
     z.object({
       centre: z.string(),
@@ -257,11 +287,14 @@ export function registerFindCommonSlotsTool(server: McpServer): void {
       try {
         const result = await findCommonSlots(input);
         const text =
-          result.matches.length === 0
+          result.total === 0
             ? 'No centre/day combination has all requested categories available.'
-            : result.matches
-                .map((m) => `${m.centre} on ${m.day}: ${m.groups.map(formatGroupLabel).join(', ')}`)
-                .join('\n');
+            : [
+                `${String(result.total)} centre/day combination(s) match, showing ${String(result.returned)} from offset ${String(result.offset)}.`,
+                ...result.matches.map(
+                  (m) => `${m.centre} on ${m.day}: ${m.groups.map(formatGroupLabel).join(', ')}`,
+                ),
+              ].join('\n');
         return { content: [{ type: 'text' as const, text }], structuredContent: result };
       } catch (err) {
         return {

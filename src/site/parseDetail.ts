@@ -11,8 +11,8 @@
 import * as cheerio from 'cheerio';
 import type { AnyNode, Element, Text } from 'domhandler';
 import {
-  BASE_URL,
   capacityClassToStatus,
+  resolveSiteUrl,
   starsToLevel,
   type Capacity,
   type LevelSymbol,
@@ -49,7 +49,11 @@ export type CourseDetail = {
   sessions: string[];
 };
 
-const CANONICAL_ID_PATTERN = /\/plavecky-kurz\/[^/]+\/[^/]+\/(\d+)$/;
+// Anchored with `^` and matched against the resolved *pathname*, never the raw href. An
+// unanchored pattern matches the tail of an absolute off-site URL
+// (`https://evil.example/plavecky-kurz/a/b/123`), which would then be surfaced as the
+// course's canonical URL. `parseList`'s HREF_PATTERN carries the same guard.
+const CANONICAL_ID_PATTERN = /^\/plavecky-kurz\/[^/]+\/[^/]+\/(\d+)$/;
 
 /**
  * Replaces an inferred (guessed-year) date with the matching session date, which carries
@@ -131,7 +135,13 @@ export function parseDetail(html: string, options: ParseDetailOptions = {}): Cou
   }
 
   const canonicalHref = $('link[rel="canonical"]').attr('href') ?? '';
-  const idMatch = CANONICAL_ID_PATTERN.exec(canonicalHref);
+  if (canonicalHref === '') {
+    throw new Error(
+      'Could not determine the course id from the canonical link; the site markup may have changed.',
+    );
+  }
+  const canonicalUrl = resolveSiteUrl(canonicalHref, 'canonical link');
+  const idMatch = CANONICAL_ID_PATTERN.exec(new URL(canonicalUrl).pathname);
   const id = idMatch?.[1];
   if (id === undefined) {
     throw new Error(
@@ -188,10 +198,17 @@ export function parseDetail(html: string, options: ParseDetailOptions = {}): Cou
   const start = anchorToSessions(inferredStart, sessions);
   const end = anchorToSessions(inferredEnd, sessions);
 
-  // Day/time: one or more `.dayhod` entries.
+  // Day/time: one or more `.dayhod` entries. An empty result means the selector drifted --
+  // a course always runs on at least one day -- so throw rather than return a course with no
+  // schedule, matching `parseList`'s handling of the same markup.
   const dayCazContent = findRowContent($, root, 'Deň a čas');
-  const schedule: DaySlot[] = dayCazContent
-    .find('.dayhod')
+  const scheduleEls = dayCazContent.find('.dayhod');
+  if (scheduleEls.length === 0) {
+    throw new Error(
+      'Could not find any schedule slots (selector ".dayhod" inside the "Deň a čas" row) on the detail page; the site markup may have changed.',
+    );
+  }
+  const schedule: DaySlot[] = scheduleEls
     .map((_i, el) => {
       const $el = $(el);
       const day = $el.find('.day').text().trim();
@@ -215,6 +232,11 @@ export function parseDetail(html: string, options: ParseDetailOptions = {}): Cou
   const price = parsePrice(priceRaw);
 
   const capacityEl = root.find('.prihlasit_row span').first();
+  if (capacityEl.length === 0) {
+    throw new Error(
+      'Could not find the capacity element (selector ".prihlasit_row span") on the detail page; the site markup may have changed.',
+    );
+  }
   const capacityRaw = truncateFreeText(capacityEl.text());
   const capacityClassAttr = capacityEl.attr('class') ?? '';
   const status =
@@ -224,16 +246,31 @@ export function parseDetail(html: string, options: ParseDetailOptions = {}): Cou
       .find((s) => s !== 'unknown') ?? 'unknown';
   const capacity: Capacity = { available: true, status, raw: capacityRaw };
 
+  // A course with no booking link is legitimate (`null`), but an off-site one is not: this
+  // value is the single most likely field in the whole response for a human to click.
   const bookingHref = root.find('.prihlasit_row a.prihlasit').first().attr('href');
-  const bookingUrl = bookingHref ? `${BASE_URL}${bookingHref}` : null;
+  const bookingUrl =
+    bookingHref === undefined || bookingHref === ''
+      ? null
+      : resolveSiteUrl(bookingHref, 'booking link');
 
   const centre = truncateFreeText(root.find('.stredisko-row .centrum h3').first().text());
-  const addressRaw = ownText(root.find('.stredisko-row .address').first());
-  const address = truncateFreeText(addressRaw.replace(/[-–—]\s*$/, ''));
+  if (centre === '') {
+    throw new Error(
+      'Could not find the centre name (selector ".stredisko-row .centrum h3") on the detail page; the site markup may have changed.',
+    );
+  }
+  const addressEl = root.find('.stredisko-row .address').first();
+  if (addressEl.length === 0) {
+    throw new Error(
+      'Could not find the address element (selector ".stredisko-row .address") on the detail page; the site markup may have changed.',
+    );
+  }
+  const address = truncateFreeText(ownText(addressEl).replace(/[-–—]\s*$/, ''));
 
   return {
     id,
-    url: canonicalHref || `${BASE_URL}/node/${id}`,
+    url: canonicalUrl,
     categorySlug,
     categoryName,
     subLevel,

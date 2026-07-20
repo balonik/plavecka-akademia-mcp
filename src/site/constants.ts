@@ -126,6 +126,35 @@ export const LISTING_VIEW_SELECTOR =
 export const MAX_LISTING_PAGES = 20;
 
 /**
+ * Resolves an href scraped from a page against the site base and refuses anything that
+ * leaves the allowlisted hosts.
+ *
+ * Every URL this server hands back is presented to an LLM as authoritative and may be shown
+ * to (or clicked by) a person, so an href on a page we don't control must never survive into
+ * the output. Two separate mistakes are guarded here, both of which shipped once already in
+ * the listing parser: matching an id pattern that isn't anchored (so `https://evil.example/
+ * plavecky-kurz/a/b/123` matches the tail and passes), and building the absolute URL by
+ * string concatenation (which turns an absolute href into the garbage
+ * `https://plaveckaakademia.skhttps://evil.example/...` rather than rejecting it).
+ */
+export function resolveSiteUrl(href: string, context: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(href, BASE_URL);
+  } catch {
+    throw new Error(
+      `Could not parse the ${context} URL "${href}"; the site markup may have changed.`,
+    );
+  }
+  if (parsed.protocol !== 'https:' || !ALLOWED_HOSTS.has(parsed.hostname.toLowerCase())) {
+    throw new Error(
+      `The ${context} URL "${href}" points outside plaveckaakademia.sk; refusing to surface it.`,
+    );
+  }
+  return parsed.toString();
+}
+
+/**
  * Builds the listing URL for a category with optional centre/level filters.
  * Multi-select params repeat (`stredisko[]` once per centre); `URLSearchParams`
  * percent-encodes UTF-8 values (and the `[]` literal) the same way the site expects.

@@ -61,6 +61,8 @@ per-session calendar.
   location?: string,
   day?: string,
   onlyAvailable?: boolean,
+  limit?: number,
+  offset?: number,
 }
 ```
 
@@ -68,8 +70,11 @@ Returns only the centre/day combinations where **every** requested `{ category, 
 least one matching course, with the concrete courses per requirement attached (`groups[]` on each
 match). This is what answers "book Žralok\*\* + Delfín\* at the same place" in one call — the same
 category can be requested twice at different levels (e.g. one child ready for Žralok\*\*, a sibling
-still on Žralok\*). Omit `level` (or pass `"any"`) for no level restriction. Returns `{ matches: [] }`
-when no combination satisfies every requirement.
+still on Žralok\*). Omit `level` (or pass `"any"`) for no level restriction.
+
+Returns `{ total, returned, offset, matches[] }`, where `total` counts every match and `matches` is
+the requested slice — a broad request (one category, no location) matches most centre/day pairs, so
+pass `limit` unless you really want all of them.
 
 ## Add it to Claude
 

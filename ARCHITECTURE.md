@@ -109,6 +109,21 @@ workflow instead:
 The Function App fetches that same fixed blob URL on startup via its own **managed identity** — no
 storage key or SAS is ever needed on the read side.
 
+Two related settings exist for reasons that aren't obvious from the files themselves:
+
+- **`npm run build` uses `tsconfig.build.json`, not `tsconfig.json`.** The base config includes
+  `test/**` so the tests are type-checked, but with `rootDir: "."` that also emitted `dist/test/`,
+  which this workflow shipped to Azure (it zips `dist/` by hand, so `.funcignore` never applies).
+  The build config narrows the emit to `src/`.
+- **`host.json` sets `httpAutoCollectionOptions.enableHttpTriggerExtendedInfoCollection: false`.**
+  The connector authenticates with `?code=<key>`, and Application Insights records request URLs
+  [with all query string parameters](https://learn.microsoft.com/azure/azure-monitor/app/data-model-complete#request-telemetry)
+  — so the function key would otherwise be retained in telemetry (and `excludedTypes: "Request"`
+  exempts requests from sampling, so all of them). Disabling extended collection drops HTTP
+  method/path/response from request telemetry. That costs little here because the app serves
+  exactly one route: the path carries no diagnostic signal. Invocation traces, failures and
+  durations are unaffected.
+
 ### 1. Get the deploy SAS token
 
 - **From Terraform:** the ops repo's `terraform apply` produces a `deploy_container_sas` output

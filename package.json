@@ -9,7 +9,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "prestart": "npm run build",
     "start": "func start",
     "typecheck": "tsc -p tsconfig.json --noEmit",

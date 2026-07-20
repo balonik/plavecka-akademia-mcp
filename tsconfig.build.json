@@ -1,0 +1,10 @@
+{
+  // Emit-only config used by `npm run build`, and therefore by the deployment package.
+  //
+  // The base tsconfig deliberately includes `test/**` so `npm run typecheck` and the IDE
+  // type-check the tests too -- but with `rootDir: "."` that also emitted `dist/test/`, which
+  // the deploy workflow then shipped to Azure (it builds the zip by hand from `dist/`, so
+  // `.funcignore` never gets a say). Production ships `dist/src` only.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts"]
+}

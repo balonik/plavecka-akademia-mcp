@@ -86,15 +86,39 @@ jobs:
                  "If the repo uses a 'production' Environment, the secret must be visible to it."
             exit 1
           fi
-          status=$(curl -sS -X POST \
-            -o response.txt -w '%{http_code}' \
-            -H "x-functions-key: $SYNC_KEY" \
-            "https://${APP_NAME}.azurewebsites.net/admin/host/synctriggers")
-          echo "synctriggers returned HTTP $status"
+          attempt_sync() {
+            curl -sS -X POST \
+              -o response.txt -w '%{http_code}' \
+              -H "x-functions-key: $SYNC_KEY" \
+              "https://${APP_NAME}.azurewebsites.net/admin/host/synctriggers"
+          }
+          status=$(attempt_sync)
+          # Right after WEBSITE_RUN_FROM_PACKAGE points at a new blob, the platform can take a
+          # little while to remount the package; /admin/* (and even the SCM site) transiently 503
+          # during that window. Retry with backoff before treating it as a real failure.
+          attempts=1
+          while [ "$status" -eq 503 ] && [ "$attempts" -lt 6 ]; do
+            wait=$((attempts * 10))
+            echo "synctriggers returned 503 (attempt $attempts) -- retrying in ${wait}s"
+            sleep "$wait"
+            status=$(attempt_sync)
+            attempts=$((attempts + 1))
+          done
+          echo "synctriggers returned HTTP $status after $attempts attempt(s)"
           if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
-            echo "::error::Trigger sync failed with HTTP $status. A 401 here almost always means" \
-                 "the key is a host/function key rather than the master key -- /admin/* is" \
-                 "master-key-only."
+            if [ "$status" -eq 401 ]; then
+              echo "::error::Trigger sync failed with HTTP 401. /admin/* is master-key-only --" \
+                   "check that AZURE_FUNCTIONAPP_SYNC_KEY holds the _master key, not a host or" \
+                   "function key."
+            elif [ "$status" -eq 503 ]; then
+              echo "::error::Trigger sync still failing with HTTP 503 after $attempts attempts." \
+                   "The app itself is likely unavailable (check the site root and the SCM/Kudu" \
+                   "site, not just this endpoint) rather than anything key-related -- this usually" \
+                   "means the platform is stuck after a WEBSITE_RUN_FROM_PACKAGE swap and needs a" \
+                   "manual restart (az functionapp restart)."
+            else
+              echo "::error::Trigger sync failed with HTTP $status."
+            fi
             cat response.txt
             exit 1
           fi

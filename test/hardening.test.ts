@@ -1,11 +1,14 @@
 /**
- * Regression tests for the remaining review findings: redirect handling (M1), the wasted
- * second upstream request (M4), duplicate-category collapse (L2), limit/offset clamping
- * (L3) and absolute-href URL building (L5).
+ * Regression tests for review findings that aren't about listing-parser drift (that lives in
+ * drift.test.ts): redirect handling (M1), the wasted second upstream request (M4),
+ * duplicate-category collapse (L2), limit/offset clamping (L3) and absolute-href URL building
+ * (L5), plus the detail-page URL findings from the later audit (S1, S2) and the paging and
+ * time-validation findings (B3, B4).
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearCache, get, parseHeaderCount, type FetchFn } from '../src/site/client.js';
+import { parseDetail } from '../src/site/parseDetail.js';
 import { parseList } from '../src/site/parseList.js';
 import { findCommonSlots } from '../src/tools/find_common_slots.js';
 import { listCourses } from '../src/tools/list_courses.js';
@@ -135,5 +138,88 @@ describe('course URL construction (REVIEW.md L5)', () => {
     // "https://plaveckaakademia.skhttps://evil.example/..." -- a garbage URL handed to an
     // LLM that may show it to a user. An off-site href must be rejected outright.
     expect(() => parseList(html)).toThrow(/href/i);
+  });
+});
+
+describe('find_common_slots paging (AUDIT.md B3)', () => {
+  const fetchFn: FetchFn = async () => htmlResponse(readFixture('korytnacka-all.html'));
+
+  it('reports the full match count while returning only the requested slice', async () => {
+    const full = await findCommonSlots({ categories: [{ category: 'korytnacka' }] }, { fetchFn });
+    expect(full.total).toBeGreaterThan(3);
+    expect(full.returned).toBe(full.total);
+
+    const page = await findCommonSlots(
+      { categories: [{ category: 'korytnacka' }], limit: 3, offset: 1 },
+      { fetchFn },
+    );
+    expect(page.total).toBe(full.total);
+    expect(page.offset).toBe(1);
+    expect(page.returned).toBe(3);
+    expect(page.matches.map((m) => `${m.centre}|${m.day}`)).toEqual(
+      full.matches.slice(1, 4).map((m) => `${m.centre}|${m.day}`),
+    );
+  });
+
+  it('clamps a negative offset rather than slicing from the end', async () => {
+    const page = await findCommonSlots(
+      { categories: [{ category: 'korytnacka' }], limit: 2, offset: -5 },
+      { fetchFn },
+    );
+    expect(page.offset).toBe(0);
+    expect(page.returned).toBe(2);
+  });
+});
+
+describe('time filter validation (AUDIT.md B4)', () => {
+  const fetchFn: FetchFn = async () => htmlResponse(readFixture('korytnacka-all.html'));
+
+  it('rejects an unparseable timeFrom instead of silently returning everything', async () => {
+    // NaN comparisons are always false, so the filter used to match every course while
+    // appearing to have been applied.
+    await expect(
+      listCourses({ category: 'korytnacka', timeFrom: 'not-a-time' }, { fetchFn }),
+    ).rejects.toThrow(/"timeFrom" must be a time in HH:MM form/);
+  });
+
+  it('rejects an out-of-range time of day', async () => {
+    await expect(
+      listCourses({ category: 'korytnacka', timeTo: '99:99' }, { fetchFn }),
+    ).rejects.toThrow(/not a valid time of day/);
+  });
+
+  it('still accepts a well-formed time', async () => {
+    const result = await listCourses({ category: 'korytnacka', timeFrom: '16:00' }, { fetchFn });
+    expect(result.total).toBeGreaterThan(0);
+  });
+});
+
+describe('detail-page URL construction (AUDIT.md S1, S2)', () => {
+  const html = readFixture('detail-1313637.html');
+
+  it('rejects an off-site canonical link instead of reporting it as the course URL', () => {
+    // The canonical id pattern used to be unanchored, so this matched on its tail and the
+    // attacker's host was returned verbatim as `url` in structuredContent.
+    const drifted = html.replace(
+      /<link rel="canonical" href="[^"]*"/,
+      '<link rel="canonical" href="https://evil.example/plavecky-kurz/a/b/1313637"',
+    );
+    expect(() => parseDetail(drifted)).toThrow(/outside plaveckaakademia\.sk/i);
+  });
+
+  it('rejects an off-site booking link rather than emitting a mangled URL', () => {
+    // Previously produced "https://plaveckaakademia.skhttps://evil.example/steal" by
+    // concatenation -- the same defect L5 fixed in the listing parser. bookingUrl is the
+    // field a human is most likely to actually click.
+    const drifted = html.replace(
+      /(<a[^>]*class="[^"]*prihlasit[^"]*"[^>]*href=")[^"]*"/,
+      '$1https://evil.example/steal"',
+    );
+    expect(drifted).not.toBe(html);
+    expect(() => parseDetail(drifted)).toThrow(/outside plaveckaakademia\.sk/i);
+  });
+
+  it('still accepts a relative booking href and resolves it against the site', () => {
+    expect(parseDetail(html).bookingUrl).toMatch(/^https:\/\/plaveckaakademia\.sk\//);
   });
 });

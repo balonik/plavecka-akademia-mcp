@@ -90,7 +90,7 @@ out in prose, if a human is reading over your shoulder.
 
 ## Testing
 
-`npm run check` = typecheck → lint → format check → tests. All 134 tests run offline: the HTTP
+`npm run check` = typecheck → lint → format check → tests. All 148 tests run offline: the HTTP
 layer takes an injectable `fetchFn` (or, for `test/mcpProtocol.test.ts`'s real-wire-protocol tests
 against `createServer()`, a stubbed global `fetch`) and parsers read committed fixtures in
 `test/fixtures/`. Coverage threshold is 80% on `src/site/**` and `src/tools/**`.

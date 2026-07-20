@@ -11,6 +11,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { get, type ClientOptions } from '../site/client.js';
 import { BASE_URL, CATEGORIES } from '../site/constants.js';
+import { truncateFreeText } from '../site/normalize.js';
 
 export interface CategoryInfo {
   slug: string;
@@ -44,7 +45,14 @@ function extractAgeRange($: cheerio.CheerioAPI, categoryName: string, slug: stri
         .trim();
     }
   });
-  return found;
+  // Same reasoning as extractCentres below: an empty age range is a plausible-looking answer
+  // that reads as fact to the model, so a drifted block must fail loudly instead.
+  if (found === '') {
+    throw new Error(
+      `Could not find the age range for "${categoryName}" in the ".skupiny" block on the "${slug}" page; the site markup may have changed.`,
+    );
+  }
+  return truncateFreeText(found);
 }
 
 /**
