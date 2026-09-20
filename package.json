@@ -22,22 +22,22 @@
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test"
   },
   "dependencies": {
-    "@azure/functions": "^4.16.2",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@azure/functions": "^4.16.5",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "cheerio": "^1.2.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.10.0",
     "@vitest/coverage-v8": "^4.1.10",
     "domhandler": "^6.0.1",
-    "eslint": "^10.7.0",
+    "eslint": "^10.10.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-n": "^18.2.2",
-    "prettier": "^3.4.2",
+    "eslint-plugin-n": "^18.3.0",
+    "prettier": "^3.9.7",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.64.0",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^4.1.10"
   }
 }
